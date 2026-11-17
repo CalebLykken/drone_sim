@@ -107,7 +107,9 @@ class SimResult:
 def load_controller(spec: str) -> Controller:
     """Load a controller from "path/to/file.py" or "path/to/file.py:ClassName".
 
-    Without a class name, the file must define exactly one Controller subclass.
+    Without a class name, the file must define exactly one Controller subclass,
+    or a `stack()` function returning a list of nodes (a stack file, see
+    drone_sim.nodes), which becomes a StackController.
     """
     path_str, _, class_name = spec.partition(":")
     path = Path(path_str).resolve()
@@ -119,6 +121,11 @@ def load_controller(spec: str) -> Controller:
     module = importlib.util.module_from_spec(mod_spec)
     sys.modules[module_name] = module
     mod_spec.loader.exec_module(module)
+
+    if not class_name and callable(getattr(module, "stack", None)):
+        from .nodes import StackController
+
+        return StackController(module.stack, label=path.stem)
 
     if class_name:
         cls = getattr(module, class_name, None)

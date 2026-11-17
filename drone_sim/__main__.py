@@ -12,6 +12,23 @@ from .sim import SCENARIOS, DroneSpec, SimConfig, Simulator, load_controller, of
 CONTROLLERS = Path(__file__).resolve().parent.parent / "controllers"
 
 
+def node_graphs(sim: Simulator, paths: list[str]):
+    """Each drone's node graph. Drones flying a plain controller are shown as
+    the equivalent stack (perfect state -> controller)."""
+    from .nodes import StackController, default_stack
+
+    graphs = []
+    for d, path in zip(sim.drones, paths):
+        if isinstance(d.controller, StackController):
+            graphs.append(d.controller.graph)
+        else:
+            stand_in = default_stack(load_controller(path))
+            stand_in.name = d.name
+            stand_in.reset(d.params)
+            graphs.append(stand_in.graph)
+    return graphs
+
+
 CIRCLE_ALTITUDE = 1.5  # m
 CIRCLE_TAKEOFF = 2.0  # s, hover in place before crossing
 
@@ -59,6 +76,11 @@ def main(argv=None):
     ap.add_argument("--speed", type=float, default=1.0, help="playback speed multiplier")
     ap.add_argument("--save", help="save the animation to a .gif or .mp4 instead of showing it")
     ap.add_argument("--no-gui", action="store_true", help="just print metrics")
+    ap.add_argument("--graph", action="store_true",
+                    help="show each drone's node graph (like rqt_graph) instead of the flight")
+    ap.add_argument("--graph-out", metavar="FILE",
+                    help="write the node graph to FILE: .png/.svg/.pdf image, .dot (Graphviz), "
+                         "or .mmd (Mermaid)")
     args = ap.parse_args(argv)
     if len(args.wind) > 3:
         ap.error("--wind takes at most 3 values (X Y Z)")
@@ -120,11 +142,29 @@ def main(argv=None):
 
     print("layout: circle swap" if args.layout == "circle" else f"scenario: {args.scenario}")
     for d, r in zip(sim.drones, sim.results()):
-        print(f"{d.name}  controller: {type(d.controller).__name__}")
+        label = getattr(d.controller, "label", None)
+        kind = f"stack {label}" if label else type(d.controller).__name__
+        print(f"{d.name}  controller: {kind}")
         for k, v in r.metrics().items():
             print(f"  {k:20s} {v:.3f}" if isinstance(v, float) else f"  {k:20s} {v}")
     for c in sim.collisions:
         print(f"collision: {c.a} and {c.b} at t = {c.t:.2f} s")
+
+    if args.graph or args.graph_out:
+        graphs = node_graphs(sim, paths)
+        if args.graph_out:
+            from .graphics.node_graph import save_graphs
+
+            save_graphs(graphs, args.graph_out)
+            print(f"saved {args.graph_out}")
+        if args.graph:
+            import matplotlib.pyplot as plt
+
+            from .graphics.node_graph import draw_graphs
+
+            draw_graphs(graphs)
+            plt.show()
+        return
 
     if args.no_gui or args.live:
         return

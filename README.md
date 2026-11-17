@@ -73,6 +73,88 @@ collision-avoidance controllers. `Simulator(drones=[...])` steps them one
 control period at a time; `sim.drones`, `sim.drone("leader")`,
 `sim.results()`, and `sim.collisions` give per-drone access.
 
+## Building a full stack from nodes
+
+Beyond a single controller class, a drone can run a **stack**: ROS-style
+nodes that talk over typed topics, e.g. sensors → estimator → controller.
+
+```bash
+python -m drone_sim -c stacks/gps_imu_pid.py -s square        # IMU + GPS -> filter -> PID
+python -m drone_sim -c stacks/gps_imu_pid.py --graph          # show the node graph (like rqt_graph)
+python -m drone_sim -c stacks/gps_imu_pid.py --graph-out stack.png   # or .svg, .dot, .mmd
+python -m drone_sim -c stacks/mocap_phri.py --layout circle -n 4    # indoor swarm on mocap + PHRI
+python -m drone_sim --live -c stacks/manual_gps.py            # fly it yourself on estimated state
+```
+
+A stack file is like a launch file: a `stack()` function returning nodes.
+Pass it anywhere a controller goes (`-c`, `--live`, multiple drones).
+
+```python
+from drone_sim.nodes import ControllerNode, Gps, GpsImuEstimator, Imu
+
+def stack():
+    return [
+        Imu(rate=250, accel_noise=0.05, gyro_noise=0.002),
+        Gps(rate=10, pos_noise=0.1),
+        GpsImuEstimator(),
+        ControllerNode("controllers/pid.py", rate=250),   # any existing controller
+    ]
+```
+
+Each drone's stack runs in its own namespace (`/drone0/imu`, ...), plus the
+global `/swarm`. A `sim` node (the simulator bridge, like a Gazebo plugin)
+publishes `ground_truth`, `setpoint`, `sticks`, and `/swarm`, and applies
+`motor_command`:
+
+| Node | Subscribes | Publishes |
+|---|---|---|
+| `Imu`, `Gps`, `Mocap` (sensors, configurable rate/noise) | `ground_truth` | `imu`, `gps`, `mocap` |
+| `PerfectState` (no sensors; same as a plain controller) | `ground_truth` | `state_estimate` |
+| `GpsImuEstimator`, `MocapImuEstimator` (complementary filters) | `imu` + `gps` / `mocap` | `state_estimate` |
+| `ControllerNode(controller)` | `state_estimate`, `setpoint`, `/swarm`, `sticks` | `motor_command` |
+
+### Writing a node
+
+```python
+from dataclasses import dataclass
+from drone_sim.nodes import Node
+from drone_sim.nodes.msgs import StateEstimate
+
+@dataclass(frozen=True)
+class Altitude:          # messages are dataclasses with a `stamp`
+    stamp: float
+    z: float
+
+class AltitudeMonitor(Node):
+    kind = "estimator"                      # colors it in the graph view
+    def setup(self):                        # runs on every (re)start
+        self.pub = self.create_publisher("altitude", Altitude)
+        self.create_subscription("state_estimate", StateEstimate, self.on_state)
+        self.create_timer(0.5, self.report) # every 0.5 s of sim time
+        self.z = 0.0
+    def on_state(self, msg):
+        self.z = msg.state.z
+        self.pub.publish(Altitude(self.now, self.z))
+    def report(self):
+        print(f"{self.namespace} at {self.now:.1f} s: {self.z:.2f} m")
+```
+
+Topic names are relative to the drone's namespace unless they start with
+`/`; rename a node's topics with `remap={"imu": "imu_raw"}` (e.g. to put a
+filter node between a sensor and the estimator). Parameters passed as
+keyword arguments are available as `self.param(name, default)`.
+
+Unlike ROS, everything runs in one process in **simulation time**: timers
+fire in time order (same-time timers in the order nodes are listed, so list
+stacks like a pipeline), and publishing delivers to subscribers immediately.
+Runs are exactly reproducible, and sensor noise is seeded per drone and per
+sensor. `graph.describe()` lists nodes and topics with their measured rates,
+and `to_dot` / `to_mermaid` export the graph.
+
+With real sensors every PHRI drone sees a slightly different world, so they
+can no longer share game solves (see below): a 4-drone mocap swarm takes
+about 3× longer than with perfect state.
+
 ## Prosocial planning (PHRI)
 
 `controllers/phri.py` implements the planner from
@@ -237,14 +319,18 @@ drone_sim/
   controller.py   Controller base class (the interface you implement) and Sticks
   control.py      helpers: thrust vector -> attitude -> rotor thrusts
   phri.py         prosocial multi-agent planner (PHRI paper, IBR)
+  nodes/          ROS-style framework: Node/Graph (core), msgs, sensors,
+                  estimators, bridge (stacks as controllers, ControllerNode)
   sim.py          Simulator, run(), scenarios, wind/noise, controller loader
   session.py      LiveSession: keys -> sticks, real-time stepping (no graphics)
   graphics/       everything that draws (the only code that imports matplotlib)
     drone.py        drone model shared by both views
     playback.py     animate a finished SimResult
     live.py         window for keyboard flight around a LiveSession
+    node_graph.py   node graph view (rqt_graph-style) and image export
   __main__.py     command line
 controllers/      example controllers
+stacks/           example stacks (sensors + estimator + controller)
 tests/            python -m pytest tests/
 ```
 
