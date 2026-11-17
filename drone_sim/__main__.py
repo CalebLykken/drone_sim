@@ -4,17 +4,20 @@ import argparse
 import sys
 from pathlib import Path
 
-from .sim import SCENARIOS, SimConfig, load_controller, run
+from .sim import SCENARIOS, SimConfig, Simulator, load_controller, run
 
-DEFAULT_CONTROLLER = Path(__file__).resolve().parent.parent / "controllers" / "pid.py"
+CONTROLLERS = Path(__file__).resolve().parent.parent / "controllers"
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="drone_sim", description=__doc__)
-    ap.add_argument("-c", "--controller", default=str(DEFAULT_CONTROLLER),
-                    help="path/to/file.py or path/to/file.py:ClassName (default: controllers/pid.py)")
+    ap.add_argument("-c", "--controller",
+                    help="path/to/file.py or path/to/file.py:ClassName "
+                         "(default: controllers/pid.py, or controllers/manual.py with --live)")
+    ap.add_argument("--live", action="store_true",
+                    help="fly in real time with the keyboard (see controllers/manual.py)")
     ap.add_argument("-s", "--scenario", default="step", choices=sorted(SCENARIOS))
-    ap.add_argument("-d", "--duration", type=float, default=12.0, help="seconds")
+    ap.add_argument("-d", "--duration", type=float, default=12.0, help="seconds (ignored with --live)")
     ap.add_argument("--control-hz", type=float, default=250.0)
     ap.add_argument("--wind", type=float, nargs="+", default=[0.0], metavar="N",
                     help="steady wind force [N]: X, or X Y, or X Y Z")
@@ -27,6 +30,10 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if len(args.wind) > 3:
         ap.error("--wind takes at most 3 values (X Y Z)")
+    if args.live and (args.save or args.no_gui):
+        ap.error("--live can't be combined with --save or --no-gui")
+    if args.controller is None:
+        args.controller = str(CONTROLLERS / ("manual.py" if args.live else "pid.py"))
 
     sys.path.insert(0, str(Path.cwd()))  # let controllers import helpers next to them
     controller = load_controller(args.controller)
@@ -39,13 +46,23 @@ def main(argv=None):
         sensor_noise=args.noise,
         seed=args.seed,
     )
-    result = run(controller, config)
+
+    if args.live:
+        from .live import fly
+
+        sim = Simulator(controller, config)
+        fly(sim)
+        if sim.k == 0:
+            return
+        result = sim.result()
+    else:
+        result = run(controller, config)
 
     print(f"controller: {type(controller).__name__}  scenario: {args.scenario}")
     for k, v in result.metrics().items():
         print(f"  {k:20s} {v:.3f}" if isinstance(v, float) else f"  {k:20s} {v}")
 
-    if args.no_gui:
+    if args.no_gui or args.live:
         return
     from .viz import animate
 

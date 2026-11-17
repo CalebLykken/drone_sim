@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from drone_sim import Controller, DroneParams, SimConfig, State, load_controller, run
+from drone_sim import Controller, DroneParams, SimConfig, Simulator, State, Sticks, load_controller, run
 from drone_sim.dynamics import euler_to_quat, quat_to_rot, rot_to_euler
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -121,3 +121,53 @@ def test_load_rejects_ambiguous_file(tmp_path):
 def test_bad_controller_output_is_reported(cmd):
     with pytest.raises(ValueError, match="expected four finite thrusts"):
         run(Constant(*cmd), SimConfig(duration=0.1))
+
+
+# --- Manual (stick) control ------------------------------------------------------
+
+def fly_sticks(sim, seconds, **sticks):
+    sim.controller.sticks = Sticks(**sticks)
+    for _ in range(int(seconds / sim.control_dt)):
+        sim.step()
+
+
+def manual_sim():
+    return Simulator(load_controller(str(ROOT / "controllers" / "manual.py")), SimConfig())
+
+
+def test_manual_takes_off_and_hovers_when_sticks_released():
+    sim = manual_sim()
+    fly_sticks(sim, 2.0, throttle=1.0)
+    assert sim.state.z > 1.5
+    fly_sticks(sim, 2.0)  # brakes over a few tenths of a meter, then holds
+    z = sim.state.z
+    fly_sticks(sim, 2.0)
+    assert np.linalg.norm(sim.state.vel) < 0.05
+    assert sim.state.z == pytest.approx(z, abs=0.02)
+
+
+def test_manual_sticks_move_relative_to_heading():
+    sim = manual_sim()
+    fly_sticks(sim, 1.5, throttle=1.0)
+    fly_sticks(sim, 2.0, pitch=1.0)  # forward = +x at heading 0
+    assert sim.state.vel[0] > 2.0
+    fly_sticks(sim, 2.0)
+
+    fly_sticks(sim, 1.0, yaw=1.0)  # turn right 90 degrees
+    fly_sticks(sim, 1.0)
+    assert np.degrees(sim.state.euler[2]) == pytest.approx(-90, abs=5)
+
+    fly_sticks(sim, 2.0, pitch=1.0)  # now forward is -y
+    assert sim.state.vel[1] < -2.0
+    assert abs(sim.state.vel[0]) < 0.3
+
+    fly_sticks(sim, 2.0)
+    fly_sticks(sim, 2.0, roll=1.0)  # right of heading -90 is -x
+    assert sim.state.vel[0] < -2.0
+
+
+def test_simulator_reset_starts_over():
+    sim = manual_sim()
+    fly_sticks(sim, 1.0, throttle=1.0)
+    sim.reset()
+    assert sim.k == 0 and sim.state.z == 0.0 and not sim.result().t.size

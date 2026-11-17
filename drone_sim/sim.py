@@ -147,6 +147,89 @@ def _noisy(state: State, sigma: float, rng: np.random.Generator) -> State:
     return State.from_array(a)
 
 
+class Simulator:
+    """Steps a flight one control period at a time and logs it.
+
+    `run` drives this for a fixed duration; live mode drives it in real time.
+    Set `controller.sticks` between steps to feed pilot inputs.
+    """
+
+    def __init__(
+        self,
+        controller: Controller,
+        config: SimConfig | None = None,
+        params: DroneParams | None = None,
+        target_fn: Callable[[float], Target] | None = None,
+    ):
+        self.controller = controller
+        self.config = config or SimConfig()
+        self.params = params or DroneParams()
+        self.target_fn = target_fn or SCENARIOS[self.config.scenario]
+        self.dt = 1.0 / self.config.physics_hz
+        self.substeps = max(1, round(self.config.physics_hz / self.config.control_hz))
+        self.control_dt = self.substeps * self.dt
+        self.reset()
+
+    def reset(self) -> None:
+        """Back to the initial state and an empty log."""
+        self.rng = np.random.default_rng(self.config.seed)
+        self.k = 0
+        self.state = State.from_array(self.config.initial_state.as_array())
+        self.thrust = np.zeros(4)
+        self.gust = np.zeros(3)
+        self.wind = np.asarray(self.config.wind_mean, dtype=float)
+        self.target = (0.0, 0.0, 0.0, 0.0)
+        self._log: dict[str, list] = {
+            k: [] for k in ("t", "state", "euler", "target", "cmd", "thrust", "wind")
+        }
+        self.controller.reset(self.params)
+
+    @property
+    def t(self) -> float:
+        return self.k * self.control_dt
+
+    def step(self) -> None:
+        """Advance one control period: call the controller once, then physics."""
+        cfg, t = self.config, self.t
+        target = tuple(float(v) for v in self.target_fn(t))
+        if len(target) == 3:
+            target = (*target, 0.0)
+        self.target = target
+
+        state = self.state
+        measured = _noisy(state, cfg.sensor_noise, self.rng) if cfg.sensor_noise > 0 else state
+        command = np.asarray(self.controller.update(t, measured, target, self.control_dt), dtype=float)
+        if command.shape != (4,) or not np.all(np.isfinite(command)):
+            raise ValueError(f"controller returned {command!r}; expected four finite thrusts")
+
+        # Gusts: first-order filtered noise with a ~0.5 s correlation time.
+        if cfg.wind_gust > 0:
+            a = self.control_dt / 0.5
+            self.gust[:2] += -a * self.gust[:2] + cfg.wind_gust * math.sqrt(2 * a) * self.rng.normal(size=2)
+        self.wind = np.asarray(cfg.wind_mean, dtype=float) + self.gust
+
+        log = self._log
+        log["t"].append(t)
+        log["state"].append(state.as_array())
+        log["euler"].append(state.euler)
+        log["target"].append(target)
+        log["cmd"].append(command)
+        log["thrust"].append(self.thrust)
+        log["wind"].append(self.wind)
+
+        for _ in range(self.substeps):
+            self.thrust = motor_step(self.thrust, command, self.params, self.dt)
+            self.state = step(self.state, self.thrust, self.params, self.dt, wind=self.wind)
+        self.k += 1
+
+    def result(self) -> SimResult:
+        log = {k: np.array(v, dtype=float) for k, v in self._log.items()}
+        return SimResult(
+            log["t"], log["state"], log["euler"], log["target"], log["cmd"],
+            log["thrust"], log["wind"], self.params, self.config,
+        )
+
+
 def run(
     controller: Controller,
     config: SimConfig | None = None,
@@ -154,59 +237,7 @@ def run(
     target_fn: Callable[[float], Target] | None = None,
 ) -> SimResult:
     """Simulate one flight. Pass `target_fn` to override the named scenario."""
-    config = config or SimConfig()
-    params = params or DroneParams()
-    target_fn = target_fn or SCENARIOS[config.scenario]
-    rng = np.random.default_rng(config.seed)
-
-    dt = 1.0 / config.physics_hz
-    substeps = max(1, round(config.physics_hz / config.control_hz))
-    control_dt = substeps * dt
-    n = int(round(config.duration / control_dt))
-
-    state = State.from_array(config.initial_state.as_array())
-    thrust = np.zeros(4)
-    gust = np.zeros(3)
-    wind_mean = np.asarray(config.wind_mean, dtype=float)
-    controller.reset(params)
-
-    log_t = np.empty(n)
-    log_state = np.empty((n, 13))
-    log_euler = np.empty((n, 3))
-    log_target = np.empty((n, 4))
-    log_cmd = np.empty((n, 4))
-    log_thrust = np.empty((n, 4))
-    log_wind = np.empty((n, 3))
-
-    for k in range(n):
-        t = k * control_dt
-        target = tuple(float(v) for v in target_fn(t))
-        if len(target) == 3:
-            target = (*target, 0.0)
-
-        measured = _noisy(state, config.sensor_noise, rng) if config.sensor_noise > 0 else state
-        command = np.asarray(controller.update(t, measured, target, control_dt), dtype=float)
-        if command.shape != (4,) or not np.all(np.isfinite(command)):
-            raise ValueError(f"controller returned {command!r}; expected four finite thrusts")
-
-        # Gusts: first-order filtered noise with a ~0.5 s correlation time.
-        if config.wind_gust > 0:
-            a = control_dt / 0.5
-            gust[:2] += -a * gust[:2] + config.wind_gust * math.sqrt(2 * a) * rng.normal(size=2)
-        wind = wind_mean + gust
-
-        log_t[k] = t
-        log_state[k] = state.as_array()
-        log_euler[k] = state.euler
-        log_target[k] = target
-        log_cmd[k] = command
-        log_thrust[k] = thrust
-        log_wind[k] = wind
-
-        for _ in range(substeps):
-            thrust = motor_step(thrust, command, params, dt)
-            state = step(state, thrust, params, dt, wind=wind)
-
-    return SimResult(
-        log_t, log_state, log_euler, log_target, log_cmd, log_thrust, log_wind, params, config
-    )
+    sim = Simulator(controller, config, params, target_fn)
+    for _ in range(int(round(sim.config.duration / sim.control_dt))):
+        sim.step()
+    return sim.result()

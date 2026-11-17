@@ -8,6 +8,7 @@ controller as a Python class, point the sim at the file, and watch it fly.
 - Motor lag and thrust saturation
 - Optional steady wind, gusts, and sensor noise
 - Rotatable 3D animation with time-series plots, or headless metrics for batch tuning
+- Live mode: fly it yourself with the keyboard
 
 ## Quick start
 
@@ -22,6 +23,32 @@ python -m drone_sim --save flight.gif                 # export the animation
 ```
 
 Drag the 3D view with the mouse to rotate it.
+
+## Flying it yourself
+
+```bash
+python -m drone_sim --live                 # manual controller, try to reach the red X
+python -m drone_sim --live -s square --gust 0.5
+```
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | climb / descend (start here to take off) |
+| `W` / `S` | forward / back |
+| `A` / `D` | left / right |
+| `←` / `→` | turn left / right |
+| `R` | reset |
+| `Esc` | quit |
+
+`controllers/manual.py` flies in velocity mode, like a camera drone: the
+keys ask for a speed relative to where the drone is facing, and letting go
+brakes to a hover. Click the window first if the keys don't respond.
+
+Any controller can read the pilot's inputs from `self.sticks`
+(`throttle`, `roll`, `pitch`, `yaw`, each in [-1, 1]), so you can write
+your own flight mode (e.g. angle mode or acro) and fly it with
+`--live --controller path/to/yours.py`. You can also fly an autonomous
+controller live, e.g. `--live -c controllers/pid.py -s figure8`.
 
 ## Writing your own controller
 
@@ -54,8 +81,13 @@ python -m drone_sim --controller path/to/file.py:MyController   # if the file ha
 ```
 
 Start by copying `controllers/pid.py` (cascaded position PID → geometric
-attitude control) or `controllers/hover_only.py` (the minimal template: holds
-altitude and stays level, but drifts).
+attitude control), `controllers/manual.py` (keyboard velocity mode), or
+`controllers/hover_only.py` (the minimal template: holds altitude and stays
+level, but drifts).
+
+`drone_sim.control` has helpers for the usual last step: turn a desired
+acceleration into a tilt-limited thrust vector (`thrust_vector`) and fly
+along it while facing a heading (`track_thrust_vector`).
 
 ### Conventions
 
@@ -78,7 +110,7 @@ altitude and stays level, but drifts).
 For tuning sweeps, optimization, or custom target paths:
 
 ```python
-from drone_sim import DroneParams, SimConfig, load_controller, run
+from drone_sim import DroneParams, SimConfig, Simulator, Sticks, load_controller, run
 
 ctrl = load_controller("controllers/pid.py")
 result = run(ctrl, SimConfig(scenario="step", wind_gust=0.5),
@@ -88,6 +120,13 @@ print(result.metrics())   # rms_pos_error_m, final_pos_error_m, max_tilt_deg, fl
 result.pos                # (N, 3) positions
 result.euler              # (N, 3) roll, pitch, yaw
 result.states             # (N, 13): pos, vel, quat, omega
+
+# Step by step, e.g. to script stick inputs:
+sim = Simulator(load_controller("controllers/manual.py"))
+sim.controller.sticks = Sticks(throttle=1.0)
+for _ in range(500):      # 2 s at 250 Hz
+    sim.step()
+print(sim.state.pos)
 ```
 
 ## Layout
@@ -95,9 +134,11 @@ result.states             # (N, 13): pos, vel, quat, omega
 ```
 drone_sim/
   dynamics.py     DroneParams, State, equations of motion, motor model, rotation helpers
-  controller.py   Controller base class (the interface you implement)
-  sim.py          run loop, scenarios, wind/noise, controller loader
+  controller.py   Controller base class (the interface you implement) and Sticks
+  control.py      helpers: thrust vector -> attitude -> rotor thrusts
+  sim.py          Simulator, run(), scenarios, wind/noise, controller loader
   viz.py          matplotlib 3D animation
+  live.py         real-time keyboard flight
   __main__.py     command line
 controllers/      example controllers
 tests/            python -m pytest tests/
