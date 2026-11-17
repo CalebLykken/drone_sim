@@ -106,3 +106,125 @@ def test_edited_source_is_reloaded(bridge):
     renamed = src.replace("class HoverOnly", "class Renamed")
     second = json.loads(bridge.check(json.dumps({"name": "mine.py", "source": renamed})))
     assert (first["class"], second["class"]) == ("HoverOnly", "Renamed")
+
+
+# --- Stacks tab ---------------------------------------------------------------------
+
+STACKS = ROOT / "stacks"
+ALL_CONTROLLERS = [ctrl(p.name) for p in sorted(CONTROLLERS.glob("*.py"))]
+
+
+def open_stack(bridge, name="gps_imu_pid.py", source=None):
+    reply = json.loads(bridge.stack_open(json.dumps({
+        "name": name,
+        "source": source if source is not None else (STACKS / name).read_text(),
+        "controllers": ALL_CONTROLLERS,
+    })))
+    assert reply["ok"], reply
+    return reply
+
+
+def edit(bridge, **req):
+    return json.loads(bridge.stack_edit(json.dumps(req)))
+
+
+def test_stack_open_lists_nodes_graph_and_catalog(bridge):
+    s = open_stack(bridge)
+    assert [n["name"] for n in s["nodes"]] == ["imu", "gps", "gps_imu_estimator", "controller"]
+    labels = {v["label"] for v in s["graph"]["vertices"]}
+    assert {"sim", "imu", "gps", "state_estimate", "motor_command"} <= labels
+    assert any(e["feedback"] for e in s["graph"]["edges"])  # motor_command back into sim
+    sensors = [c["class"] for c in s["catalog"] if c["kind"] == "sensor"]
+    assert sensors == ["Gps", "Imu", "Mocap", "PerfectState"]
+    gps = next(n for n in s["nodes"] if n["name"] == "gps")
+    rate = next(p for p in gps["params"] if p["name"] == "rate")
+    assert rate == {**rate, "type": "number", "value": 10, "default": 10.0}
+    controller = next(p for p in s["nodes"][-1]["params"] if p["name"] == "controller")
+    assert controller["value"] == "controllers/pid.py" and "controllers/phri.py" in controller["choices"]
+    assert s["warnings"] == []
+
+
+def test_stack_edits_rewrite_only_the_stack_function(bridge):
+    original = (STACKS / "gps_imu_pid.py").read_text()
+    open_stack(bridge)
+    s = edit(bridge, op="update", name="gps", params={"rate": 5, "pos_noise": 0.5})
+    assert s["ok"] and s["selected"] == "gps"
+    assert "Gps(rate=5, pos_noise=0.5, vel_noise=0.05)" in s["source"]
+    s = edit(bridge, op="add", key="drone_sim.nodes.Mocap", params={"rate": 50})
+    assert s["selected"] == "mocap"
+    assert "from drone_sim.nodes import ControllerNode, Gps, GpsImuEstimator, Imu, Mocap" in s["source"]
+    assert "Mocap(rate=50)," in s["source"]
+    assert [n["name"] for n in s["nodes"]][:4] == ["imu", "gps", "mocap", "gps_imu_estimator"]  # after the sensors
+    assert s["warnings"] == ["Nothing reads mocap (published by mocap)."]
+    # Everything outside stack() is untouched.
+    head = original.split("def stack")[0].replace(
+        "import ControllerNode, Gps, GpsImuEstimator, Imu", "import ControllerNode, Gps, GpsImuEstimator, Imu, Mocap")
+    assert s["source"].startswith(head)
+    s = edit(bridge, op="remove", name="mocap")
+    assert "Mocap(" not in s["source"].split("def stack")[1]
+
+
+def test_stack_rejects_bad_edits_without_changing_anything(bridge):
+    before = open_stack(bridge)["source"]
+    for req in [
+        {"op": "update", "name": "gps", "params": {"name": "imu"}},
+        {"op": "update", "name": "gps", "params": {"rate": "fast"}},
+        {"op": "update", "name": "controller", "params": {"controller": "controllers/nope.py"}},
+        {"op": "add", "key": "drone_sim.nodes.NoSuchSensor", "params": {}},
+        {"op": "remove", "name": "ghost"},
+    ]:
+        reply = edit(bridge, **req)
+        assert reply == {"ok": False, "error": reply["error"]} and reply["error"]
+    assert edit(bridge, op="test", scenario="hover", duration=0.2)["source"] == before
+
+
+def test_stack_remap_warns_about_loose_ends(bridge):
+    open_stack(bridge)
+    s = edit(bridge, op="update", name="gps", params={"remap": {"gps": "gps_raw"}})
+    assert "Nothing reads gps_raw (published by gps)." in s["warnings"]
+    assert "Nothing publishes gps, which gps_imu_estimator needs." in s["warnings"]
+    assert 'remap={"gps": "gps_raw"}' in s["source"]
+    s = edit(bridge, op="update", name="gps", params={"remap": {}})
+    assert s["warnings"] == [] and "remap" not in s["source"].split("def stack")[1]
+
+
+def test_stack_test_flight_measures_rates(bridge):
+    open_stack(bridge)
+    edit(bridge, op="update", name="gps", params={"rate": 5})
+    s = edit(bridge, op="test", scenario="hover", duration=3)
+    assert s["flight"]["metrics"]["flipped"] is False
+    gps = next(v for v in s["graph"]["vertices"] if v["type"] == "topic" and v["label"] == "gps")
+    assert gps["rate"] == pytest.approx(5.0)
+
+
+def test_stack_files_keep_custom_nodes(bridge):
+    source = '''"""A stack with its own node."""
+
+from pathlib import Path
+
+from drone_sim.nodes import ControllerNode, Node, PerfectState
+from drone_sim.nodes.msgs import StateEstimate
+
+CONTROLLERS = Path(__file__).resolve().parent.parent / "controllers"
+
+
+class Watcher(Node):
+    """Counts estimates."""
+
+    def __init__(self, name="watcher", every: float = 1.0, **kw):
+        super().__init__(name, **kw)
+        self.every = every
+
+    def setup(self):
+        self.create_subscription("state_estimate", StateEstimate, lambda m: None)
+
+
+def stack():
+    return [PerfectState(), ControllerNode(CONTROLLERS / "pid.py")]
+'''
+    s = open_stack(bridge, "custom_stack.py", source)
+    watcher = next(c for c in s["catalog"] if c["class"] == "Watcher")
+    assert watcher["local"] and [p["name"] for p in watcher["params"]] == ["name", "every", "remap"]
+    s = edit(bridge, op="add", key=watcher["key"], params={"every": 2.5})
+    assert "class Watcher(Node):" in s["source"] and "Watcher(every=2.5)," in s["source"]
+    assert "watcher" in [n["name"] for n in s["nodes"]]

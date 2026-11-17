@@ -28,6 +28,7 @@ Differences from ROS, on purpose:
 from __future__ import annotations
 
 import heapq
+import inspect
 import itertools
 import re
 from dataclasses import dataclass, field
@@ -108,6 +109,13 @@ class Node:
 
     kind = "node"  # used to group and color nodes in the graph view
 
+    def __new__(cls, *args, **kwargs):
+        # Remember how the node was constructed, so tools (the stack editor)
+        # can show its settings and write it back out. See constructor_args().
+        node = super().__new__(cls)
+        node._ctor = (args, kwargs)
+        return node
+
     def __init__(self, name: str | None = None, *, remap: dict[str, str] | None = None, **params):
         self.name = name or _snake(type(self).__name__)
         self.remap = dict(remap or {})
@@ -164,8 +172,37 @@ class Node:
         self.graph._add_timer(timer)
         return timer
 
+    def constructor_args(self) -> dict[str, Any]:
+        """The keyword arguments this node was constructed with (positional
+        ones named), e.g. Imu(rate=250) -> {"rate": 250}."""
+        args, kwargs = self._ctor
+        if not args:
+            return dict(kwargs)
+        params = [p for p in constructor_params(type(self))
+                  if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+        return {**{p.name: a for p, a in zip(params, args)}, **kwargs}
+
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.name!r})"
+
+
+def constructor_params(cls: type) -> list[inspect.Parameter]:
+    """Every named constructor parameter of a node class, following **kwargs
+    up the class hierarchy (Imu -> Sensor -> Node), in declaration order."""
+    seen: dict[str, inspect.Parameter] = {}
+    for klass in cls.__mro__:
+        init = klass.__dict__.get("__init__")
+        if init is None:
+            continue
+        has_var_kw = False
+        for p in list(inspect.signature(init).parameters.values())[1:]:  # skip self
+            if p.kind is p.VAR_KEYWORD:
+                has_var_kw = True
+            elif p.kind is not p.VAR_POSITIONAL and p.name not in seen:
+                seen[p.name] = p
+        if not has_var_kw or klass is Node:
+            break
+    return list(seen.values())
 
 
 class Graph:

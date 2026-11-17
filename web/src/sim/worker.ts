@@ -38,6 +38,8 @@ interface Bridge extends PyProxy {
   check(controllerJson: string): string;
   Playback(optsJson: string): PlaybackProxy;
   Live(optsJson: string): LiveProxy;
+  stack_open(requestJson: string): string;
+  stack_edit(requestJson: string): string;
 }
 interface PlaybackProxy extends PyProxy {
   advance(n: number): number;
@@ -293,6 +295,17 @@ async function handle(msg: ToWorker) {
         await startLive(msg.opts);
         post({ type: "reply", id: msg.id, ok: true, value: null });
         return;
+      case "stack:open": {
+        const request = JSON.stringify({ name: msg.name, source: msg.source, controllers: msg.controllers });
+        const out = await withPackages(() => bridge!.stack_open(request));
+        post({ type: "reply", id: msg.id, ok: true, value: JSON.parse(out) });
+        return;
+      }
+      case "stack:edit": {
+        const out = await withPackages(() => bridge!.stack_edit(JSON.stringify(msg.edit)));
+        post({ type: "reply", id: msg.id, ok: true, value: JSON.parse(out) });
+        return;
+      }
     }
   } catch (e) {
     post({ type: "reply", id: msg.id, ok: false, error: errorText(e) });

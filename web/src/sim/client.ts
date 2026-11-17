@@ -11,6 +11,8 @@ import type {
   SimInfo,
   SimKey,
   SimOptions,
+  StackEdit,
+  StackReply,
   ToWorker,
 } from "./protocol";
 
@@ -123,6 +125,16 @@ class SimClient {
 
   startLive(opts: SimOptions) {
     return this.request<null>({ type: "live:start", opts }).promise;
+  }
+
+  /** Open a stack file for editing. `controllers` are the page's current
+   * controller files, so the stack sees edits made in the Controllers tab. */
+  openStack(name: string, source: string, controllers: ControllerFile[]) {
+    return this.request<StackReply>({ type: "stack:open", name, source, controllers }).promise;
+  }
+
+  editStack(edit: StackEdit) {
+    return this.request<StackReply>({ type: "stack:edit", edit }).promise;
   }
 
   // --- Live controls ---
