@@ -1,7 +1,15 @@
-// Main-thread handle on the simulation worker: promise-based requests plus
+// Main-thread handle on the simulator: promise-based requests plus
 // subscriptions for live frames, progress, and Python output.
+//
+// Python runs in one of two places, with the same messages (protocol.ts):
+// - in this browser, in a Web Worker with Pyodide (worker.ts), or
+// - on this computer, in `python web/src/python/server.py`, over a WebSocket.
+//   The page uses the local server when it was opened through the link the
+//   server prints (?local=...&token=...) or is served by the server itself,
+//   and falls back to the browser if the server can't be reached.
 
 import { useSyncExternalStore } from "react";
+import { toPlaybackResult } from "./convert";
 import type {
   CheckResult,
   ControllerFile,
@@ -19,13 +27,68 @@ import type {
 export type SimStatus =
   | { state: "loading"; text: string }
   | { state: "ready"; info: SimInfo }
-  | { state: "error"; error: string };
+  | { state: "error"; error: string; local?: boolean };
 
 type Pending = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   onProgress?: (fraction: number) => void;
+  /** Turn the JSON reply into its final shape (only needed off the worker). */
+  convert?: (value: unknown) => unknown;
 };
+
+// --- Choosing where Python runs ------------------------------------------------------
+
+interface LocalConfig {
+  url: string; // ws://127.0.0.1:8765
+  token: string;
+}
+
+const LOCAL_KEY = "drone_sim.web.local"; // remembered for this tab (sessionStorage)
+
+/** The local Python server to use, if any. `?local=<ws url>&token=<token>`
+ * (removed from the address bar once read) selects it for this tab, the
+ * server injects it into the app it serves, and `?local=off` forgets it. */
+function localConfig(): LocalConfig | null {
+  const params = new URLSearchParams(window.location.search);
+  const local = params.get("local");
+  if (local !== null) {
+    const token = params.get("token");
+    params.delete("local");
+    params.delete("token");
+    const query = params.toString();
+    history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : "") + window.location.hash);
+    if (local === "off" || !token) {
+      forgetLocal();
+      return null;
+    }
+    const config = { url: local.replace(/\/+$/, ""), token };
+    try {
+      sessionStorage.setItem(LOCAL_KEY, JSON.stringify(config));
+    } catch {
+      // storage blocked: works until reload
+    }
+    return config;
+  }
+  const injected = (window as unknown as { __DRONE_SIM_LOCAL__?: LocalConfig }).__DRONE_SIM_LOCAL__;
+  if (injected) return injected;
+  try {
+    const saved = sessionStorage.getItem(LOCAL_KEY);
+    return saved ? (JSON.parse(saved) as LocalConfig) : null;
+  } catch {
+    return null;
+  }
+}
+
+function forgetLocal() {
+  try {
+    sessionStorage.removeItem(LOCAL_KEY);
+  } catch {
+    // nothing to forget
+  }
+}
+
+const LOCAL_TIMEOUT_MS = 3000;
 
 // A request without its id (the client assigns one). Distributes over the union.
 type RequestMessage = Extract<ToWorker, { id: number }> extends infer M
@@ -38,7 +101,8 @@ type RequestMessage = Extract<ToWorker, { id: number }> extends infer M
 export class PythonError extends Error {}
 
 class SimClient {
-  private worker: Worker;
+  private send: (msg: ToWorker) => void = () => {};
+  private local = false; // talking to the local Python server
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private frameListeners = new Set<(f: LiveFrame) => void>();
@@ -48,11 +112,68 @@ class SimClient {
   status: SimStatus = { state: "loading", text: "Starting" };
   notice: string | null = null; // an optional package downloading, e.g. "Loading cvxpy"
   output: string[] = [];
+  /** Why the local Python server isn't being used, when it was asked for. */
+  localUnavailable: string | null = null;
 
   constructor() {
-    this.worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
-    this.worker.onmessage = (e: MessageEvent<FromWorker>) => this.handle(e.data);
-    this.worker.onerror = (e) => this.setStatus({ state: "error", error: e.message || "The simulation worker failed to start." });
+    const local = localConfig();
+    if (local) this.connectLocal(local);
+    else this.startWorker();
+  }
+
+  private startWorker() {
+    this.local = false;
+    const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (e: MessageEvent<FromWorker>) => this.handle(e.data);
+    worker.onerror = (e) => this.setStatus({ state: "error", error: e.message || "The simulation worker failed to start." });
+    this.send = (msg) => worker.postMessage(msg);
+  }
+
+  private connectLocal(config: LocalConfig) {
+    this.local = true;
+    this.setStatus({ state: "loading", text: "Connecting to local Python" });
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(`${config.url}/?token=${encodeURIComponent(config.token)}`);
+    } catch {
+      this.useBrowserInstead(`${config.url} isn't a valid address`);
+      return;
+    }
+    let opened = false;
+    const queued: ToWorker[] = [];
+    this.send = (msg) => (ws.readyState === WebSocket.OPEN ? ws.send(JSON.stringify(msg)) : queued.push(msg));
+    const timer = setTimeout(() => {
+      if (opened) return;
+      ws.close();
+      this.useBrowserInstead(`no answer from ${config.url}`);
+    }, LOCAL_TIMEOUT_MS);
+    ws.onopen = () => {
+      opened = true;
+      clearTimeout(timer);
+      queued.splice(0).forEach((m) => ws.send(JSON.stringify(m)));
+    };
+    ws.onmessage = (e: MessageEvent<string>) => this.handle(JSON.parse(e.data) as FromWorker);
+    ws.onclose = (e) => {
+      clearTimeout(timer);
+      if (!opened) {
+        // Server not running, an old token (it changes on every start), or another site.
+        this.useBrowserInstead(`couldn't connect to ${config.url}`);
+        return;
+      }
+      for (const p of this.pending.values()) p.reject(new PythonError("Lost the connection to the local Python."));
+      this.pending.clear();
+      this.liveErrorListeners.forEach((f) => f("Lost the connection to the local Python."));
+      const why = e.code === 4000 ? "Another tab connected to the local Python, so this one was disconnected." : "The local Python stopped.";
+      this.setStatus({ state: "error", local: true, error: `${why} Start it again (python web/src/python/server.py) and open the link it prints, or reload to run Python in the browser.` });
+    };
+  }
+
+  private useBrowserInstead(reason: string) {
+    if (!this.local) return; // already switched
+    forgetLocal();
+    this.localUnavailable = reason;
+    this.startWorker();
+    this.setStatus({ state: "loading", text: "Starting" });
   }
 
   private setStatus(status: SimStatus) {
@@ -78,7 +199,7 @@ class SimClient {
         const p = this.pending.get(msg.id);
         this.pending.delete(msg.id);
         if (!p) break;
-        if (msg.ok) p.resolve(msg.value);
+        if (msg.ok) p.resolve(this.local && p.convert ? p.convert(msg.value) : msg.value);
         else p.reject(new PythonError(msg.error));
         break;
       }
@@ -99,23 +220,23 @@ class SimClient {
     }
   }
 
-  private request<T>(msg: RequestMessage, onProgress?: (f: number) => void) {
+  private request<T>(msg: RequestMessage, onProgress?: (f: number) => void, convert?: (v: unknown) => unknown) {
     const id = this.nextId++;
     const promise = new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, onProgress });
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, onProgress, convert });
     });
-    this.worker.postMessage({ ...msg, id } as ToWorker);
+    this.send({ ...msg, id } as ToWorker);
     return { id, promise };
-  }
-
-  private send(msg: ToWorker) {
-    this.worker.postMessage(msg);
   }
 
   // --- Requests ---
 
   runPlayback(opts: SimOptions, onProgress?: (fraction: number) => void) {
-    const { id, promise } = this.request<PlaybackResult>({ type: "playback", opts }, onProgress);
+    const { id, promise } = this.request<PlaybackResult>(
+      { type: "playback", opts },
+      onProgress,
+      (raw) => toPlaybackResult(raw as Record<string, unknown>, opts)[0], // the worker converts its own
+    );
     return { promise, cancel: () => this.send({ type: "cancel", id }) };
   }
 

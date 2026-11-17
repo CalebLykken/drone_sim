@@ -267,6 +267,35 @@ Controller edits made in the page are kept in that browser only
 and move the file into `controllers/`; it then works from the command line too
 and shows up in the web app's list for everyone.
 
+### Running the web app's Python on your computer
+
+By default the page runs Python in the browser. To use your own Python
+instead (your installed packages, no download, native speed), start the
+local backend and open the link it prints:
+
+```bash
+pip install websockets              # once
+cd web
+npm run local                       # = python3 src/python/server.py
+# drone_sim local Python (3.10.2, numpy 1.24.3) on ws://127.0.0.1:8765
+#   with `npm run dev`:   http://127.0.0.1:5173/?local=ws%3A%2F%2F127.0.0.1%3A8765&token=...
+#   built app (web/dist): http://127.0.0.1:8765/
+```
+
+The status chip then reads "Local Python ...". The server runs the same
+`bridge.py` and speaks the same messages as the in-browser worker, so every
+tab works unchanged; if it can't be reached the page falls back to the
+browser (hover the chip to see why), and `?local=off` switches back.
+
+Because the page sends controller and stack code for the server to run, it
+listens on 127.0.0.1 only, accepts pages from localhost only, and requires
+the random token in the printed link (a new one each start). One tab at a
+time is connected; opening the link in another tab takes over.
+
+For the PHRI planner the gain is modest (a 2-drone, 6 s scenario: 5.0 s
+locally vs 6.8 s in the browser, plus no cvxpy download on first use),
+because PHRI's time goes into its optimization solves either way.
+
 ### Editing stacks in the browser
 
 The web app's **Stacks** tab shows a stack's node graph (the same layout as
@@ -390,6 +419,7 @@ controllers/      example controllers
 stacks/           example stacks (sensors + estimator + controller)
 tests/            python -m pytest tests/
   test_web_bridge.py  runs web/src/python/bridge.py under CPython
+  test_local_server.py  the local Python backend over a real WebSocket
 web/              browser app (Vite + React + TypeScript, Python via Pyodide)
   src/python/bridge.py  the only web-specific Python
   src/sim/        Web Worker that loads Pyodide and the repo's Python, and its client
