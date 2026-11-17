@@ -4,16 +4,27 @@ import argparse
 import sys
 from pathlib import Path
 
-from .sim import SCENARIOS, SimConfig, Simulator, load_controller, run
+import numpy as np
+
+from .dynamics import State
+from .sim import SCENARIOS, DroneSpec, SimConfig, Simulator, load_controller, offset_target
 
 CONTROLLERS = Path(__file__).resolve().parent.parent / "controllers"
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="drone_sim", description=__doc__)
-    ap.add_argument("-c", "--controller",
-                    help="path/to/file.py or path/to/file.py:ClassName "
+    ap.add_argument("-c", "--controller", action="append",
+                    help="path/to/file.py or path/to/file.py:ClassName; repeat for one drone each "
                          "(default: controllers/pid.py, or controllers/manual.py with --live)")
+    ap.add_argument("-n", "--drones", type=int,
+                    help="number of drones (default: one per --controller); with a single "
+                         "--controller, every drone flies a copy of it")
+    ap.add_argument("--spacing", type=float, default=1.0,
+                    help="drones start side by side this far apart [m] and fly the scenario "
+                         "shifted by the same amount")
+    ap.add_argument("--ghost", action="store_true",
+                    help="drones that touch pass through each other instead of crashing")
     ap.add_argument("--live", action="store_true",
                     help="fly in real time with the keyboard (see controllers/manual.py)")
     ap.add_argument("-s", "--scenario", default="step", choices=sorted(SCENARIOS))
@@ -32,11 +43,30 @@ def main(argv=None):
         ap.error("--wind takes at most 3 values (X Y Z)")
     if args.live and (args.save or args.no_gui):
         ap.error("--live can't be combined with --save or --no-gui")
-    if args.controller is None:
-        args.controller = str(CONTROLLERS / ("manual.py" if args.live else "pid.py"))
+
+    # One controller path per drone. Live mode: the first drone is piloted.
+    paths = args.controller
+    n = args.drones or (len(paths) if paths else 1)
+    if n < 1:
+        ap.error("--drones must be at least 1")
+    if paths is None:
+        paths = [str(CONTROLLERS / "manual.py")] if args.live else [str(CONTROLLERS / "pid.py")]
+        paths += [str(CONTROLLERS / "pid.py")] * (n - 1)
+    elif len(paths) == 1:
+        paths = paths * n
+    elif len(paths) != n:
+        ap.error(f"got {len(paths)} --controller values but --drones {n}")
 
     sys.path.insert(0, str(Path.cwd()))  # let controllers import helpers next to them
-    controller = load_controller(args.controller)
+    scenario = SCENARIOS[args.scenario]
+    specs = []
+    for i, path in enumerate(paths):
+        y = (i - (n - 1) / 2) * args.spacing
+        specs.append(DroneSpec(
+            load_controller(path),  # a fresh instance per drone
+            initial_state=State(pos=np.array([0.0, y, 0.0])),
+            target_fn=offset_target(scenario, (0.0, y, 0.0)),
+        ))
     config = SimConfig(
         duration=args.duration,
         control_hz=args.control_hz,
@@ -45,26 +75,38 @@ def main(argv=None):
         wind_gust=args.gust,
         sensor_noise=args.noise,
         seed=args.seed,
+        crash_on_collision=not args.ghost,
     )
+    try:
+        sim = Simulator(drones=specs, config=config)
+    except ValueError as e:
+        ap.error(f"{e} (try a bigger --spacing, or --ghost)")
+    show = not (args.no_gui or args.save)
+    if n > 1 and (show or args.live or args.save):
+        print("note: the graphics currently draw only the first drone", file=sys.stderr)
 
     if args.live:
         from .graphics.live import fly
         from .session import LiveSession
 
-        sim = Simulator(controller, config)
         fly(LiveSession(sim))
         if sim.k == 0:
             return
-        result = sim.result()
     else:
-        result = run(controller, config)
+        for _ in range(int(round(config.duration / sim.control_dt))):
+            sim.step()
 
-    print(f"controller: {type(controller).__name__}  scenario: {args.scenario}")
-    for k, v in result.metrics().items():
-        print(f"  {k:20s} {v:.3f}" if isinstance(v, float) else f"  {k:20s} {v}")
+    print(f"scenario: {args.scenario}")
+    for d, r in zip(sim.drones, sim.results()):
+        print(f"{d.name}  controller: {type(d.controller).__name__}")
+        for k, v in r.metrics().items():
+            print(f"  {k:20s} {v:.3f}" if isinstance(v, float) else f"  {k:20s} {v}")
+    for c in sim.collisions:
+        print(f"collision: {c.a} and {c.b} at t = {c.t:.2f} s")
 
     if args.no_gui or args.live:
         return
+    result = sim.result()
     from .graphics.playback import animate
 
     if args.save:

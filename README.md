@@ -9,6 +9,7 @@ controller as a Python class, point the sim at the file, and watch it fly.
 - Optional steady wind, gusts, and sensor noise
 - Rotatable 3D animation with time-series plots, or headless metrics for batch tuning
 - Live mode: fly it yourself with the keyboard
+- Multiple drones in one simulation, with drone-to-drone collisions
 
 ## Quick start
 
@@ -23,6 +24,51 @@ python -m drone_sim --save flight.gif                 # export the animation
 ```
 
 Drag the 3D view with the mouse to rotate it.
+
+## Multiple drones
+
+```bash
+python -m drone_sim -n 3 -s square --no-gui           # 3 drones fly the square side by side
+python -m drone_sim -n 3 --spacing 2                  # start/fly 2 m apart (default 1 m)
+python -m drone_sim -c controllers/pid.py -c my.py    # one drone per --controller
+python -m drone_sim -n 2 --spacing 0.4 --ghost        # let drones pass through each other
+python -m drone_sim --live -n 3                       # you fly drone0; the others run pid.py
+```
+
+Drones start in a line along y and each flies the scenario shifted by its
+starting offset. Metrics are printed per drone, followed by any collisions.
+(The graphics currently draw only the first drone.)
+
+All drones share the clock and the wind. Two drones collide when their
+centers come closer than the sum of their `DroneParams.radius` (0.25 m by
+default); both lose their motors and fall, unless `crash_on_collision=False`
+(`--ghost`), in which case the collision is only recorded.
+
+From Python, describe each drone with a `DroneSpec`:
+
+```python
+import numpy as np
+from drone_sim import DroneParams, DroneSpec, SimConfig, State, load_controller, run_many
+
+specs = [
+    DroneSpec(load_controller("controllers/pid.py"), name="leader",
+              initial_state=State(pos=np.array([0.0, 0.0, 0.0]))),
+    DroneSpec(load_controller("my_follower.py"), name="follower",
+              initial_state=State(pos=np.array([-1.0, 0.0, 0.0])),
+              params=DroneParams(mass=1.3),                 # drones can differ
+              target_fn=lambda t: (-1.0, 0.0, 1.0)),       # default: the scenario
+]
+results, collisions = run_many(specs, SimConfig(scenario="square", duration=10))
+for r in results:
+    print(r.name, r.metrics())                           # includes "crashed"
+```
+
+Each drone needs its own controller instance. Inside a controller,
+`self.name` is the drone's name and `self.others` lists the other drones
+(`Neighbor(name, state, crashed)`), so you can write formation-keeping or
+collision-avoidance controllers. `Simulator(drones=[...])` steps them one
+control period at a time; `sim.drones`, `sim.drone("leader")`,
+`sim.results()`, and `sim.collisions` give per-drone access.
 
 ## Flying it yourself
 
@@ -116,7 +162,7 @@ ctrl = load_controller("controllers/pid.py")
 result = run(ctrl, SimConfig(scenario="step", wind_gust=0.5),
              params=DroneParams(mass=1.2),
              target_fn=lambda t: (t * 0.5, 0.0, 1.5))   # optional (x, y, z[, yaw]) path
-print(result.metrics())   # rms_pos_error_m, final_pos_error_m, max_tilt_deg, flipped
+print(result.metrics())   # rms_pos_error_m, final_pos_error_m, max_tilt_deg, flipped, crashed
 result.pos                # (N, 3) positions
 result.euler              # (N, 3) roll, pitch, yaw
 result.states             # (N, 13): pos, vel, quat, omega

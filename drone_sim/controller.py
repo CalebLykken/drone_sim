@@ -33,6 +33,15 @@ class Sticks:
     yaw: float = 0.0
 
 
+@dataclass(frozen=True)
+class Neighbor:
+    """Another drone in the same simulation, as seen by a controller."""
+
+    name: str
+    state: State  # true state (no sensor noise), at the same instant as yours
+    crashed: bool = False
+
+
 class Controller:
     """Base class for drone controllers.
 
@@ -46,9 +55,16 @@ class Controller:
 
     `self.sticks` holds the latest pilot inputs (see Sticks). In live mode the
     simulator updates it from the keyboard before every `update` call.
+
+    `self.name` is this drone's name and `self.others` is a tuple of Neighbor,
+    one per other drone in the simulation (empty when flying alone). Both are
+    set by the simulator before `reset`/`update`, so formation or collision-
+    avoidance controllers can react to the rest of the swarm.
     """
 
     sticks: Sticks = Sticks()
+    name: str = "drone0"
+    others: tuple[Neighbor, ...] = ()
 
     def reset(self, params: DroneParams) -> None:
         """Called once before the run. Store whatever physical params you need."""

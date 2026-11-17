@@ -88,6 +88,7 @@ class DroneParams:
     motor_tau: float = 0.03  # s, first-order motor spin-up time constant
     drag: float = 0.1  # N s/m, linear translational drag
     yaw_signs: tuple[float, ...] = (1.0, -1.0, 1.0, -1.0)  # FL, FR, BR, BL
+    radius: float = 0.25  # m, bounding sphere (arm + prop) for drone-drone collisions
 
     @property
     def hover_thrust(self) -> float:
