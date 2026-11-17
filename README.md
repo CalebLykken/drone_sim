@@ -1,5 +1,4 @@
 # drone_sim
-Drone Simulator
 
 A small 3D quadrotor simulator for trying out flight controllers. You write a
 controller as a Python class, point the sim at the file, and watch it fly.
@@ -10,21 +9,55 @@ controller as a Python class, point the sim at the file, and watch it fly.
 - Rotatable 3D animation with time-series plots, or headless metrics for batch tuning
 - Live mode: fly it yourself with the keyboard
 - Multiple drones in one simulation, with drone-to-drone collisions
+- ROS-style nodes and topics for full stacks (sensors → estimator → controller)
+- A prosocial multi-agent planner (PHRI, ICRA 2024)
+- A browser version that runs the same Python with no server
+
+**Contents:**
+[Quick start](#quick-start) ·
+[Multiple drones](#multiple-drones) ·
+[Stacks from nodes](#building-a-full-stack-from-nodes) ·
+[PHRI](#prosocial-planning-phri) ·
+[Flying it yourself](#flying-it-yourself) ·
+[Web app](#web-app) ·
+[Writing a controller](#writing-your-own-controller) ·
+[Python API](#using-it-from-python) ·
+[CLI options](#command-line-options) ·
+[Tests](#running-the-tests) ·
+[Layout](#layout)
 
 ## Quick start
 
-Requires Python 3.10+, `numpy`, and `matplotlib` (`pip install numpy matplotlib`).
-The PHRI controller also needs `cvxpy` (`pip install cvxpy`).
+Requires Python 3.10+, `numpy`, and `matplotlib`. The PHRI controller also
+needs `cvxpy`.
 
 ```bash
-python -m drone_sim                                   # example controller, step scenario
-python -m drone_sim -s helix                          # hover, step, square, figure8, helix, spin
-python -m drone_sim -s square --wind 1 0.5 --gust 0.5 # add wind (x y) and gusts
-python -m drone_sim --no-gui                          # just print metrics
-python -m drone_sim --save flight.gif                 # export the animation
+pip install numpy matplotlib          # add cvxpy for PHRI, pytest for the tests
 ```
 
-Drag the 3D view with the mouse to rotate it.
+There is nothing to install for the package itself: run it from the repo root.
+
+```bash
+python -m drone_sim                                   # example PID controller, step scenario
+python -m drone_sim -s helix                          # pick a scenario (see below)
+python -m drone_sim -s square --wind 1 0.5 --gust 0.5 # steady wind force (x y [z], N) and gusts
+python -m drone_sim --no-gui                          # just print metrics
+python -m drone_sim --save flight.gif                 # export the animation (.mp4 needs ffmpeg)
+```
+
+Drag the 3D view with the mouse to rotate it. Every run prints the metrics
+for each drone (RMS and final position error, max tilt, whether it flipped
+or crashed). All the flags are listed under
+[Command-line options](#command-line-options).
+
+| Scenario | Target |
+|---|---|
+| `hover` | hold (0, 0, 1) |
+| `step` (default) | hover at 1 m, then jump to (2, 1, 2) at t = 3 s |
+| `square` | four corners at different heights, 3 s each |
+| `figure8` | a figure eight that rises and falls, 8 s per loop |
+| `helix` | climb in a circle while turning to face the direction of travel |
+| `spin` | hover, then turn 90° at t = 3 s |
 
 ## Multiple drones
 
@@ -34,10 +67,15 @@ python -m drone_sim -n 3 --spacing 2                  # start/fly 2 m apart (def
 python -m drone_sim -c controllers/pid.py -c my.py    # one drone per --controller
 python -m drone_sim -n 2 --spacing 0.4 --ghost        # let drones pass through each other
 python -m drone_sim --live -n 3                       # you fly drone0; the others run pid.py
+python -m drone_sim -n 4 --layout circle --radius 3   # 4 drones swap sides of a circle
 ```
 
-Drones start in a line along y and each flies the scenario shifted by its
-starting offset. Metrics are printed per drone, followed by any collisions.
+With the default `--layout line`, drones start in a line along y and each
+flies the scenario shifted by its starting offset. With `--layout circle`,
+they start evenly spaced around a circle (`--radius`, default 4 m), climb to
+1.5 m for 2 s, then each flies to the opposite side, ignoring `--scenario`.
+It's a hard test for collision avoidance, because every drone heads for the
+center at once. Metrics are printed per drone, followed by any collisions.
 Every drone is drawn in its own color with a label; crashed drones fade out
 and collisions are marked with a red star. In live mode the camera follows
 the drone you fly.
@@ -88,6 +126,16 @@ python -m drone_sim --live -c stacks/manual_gps.py            # fly it yourself 
 
 A stack file is like a launch file: a `stack()` function returning nodes.
 Pass it anywhere a controller goes (`-c`, `--live`, multiple drones).
+`stacks/` has four examples:
+
+| Stack | Nodes |
+|---|---|
+| `perfect_pid.py` | perfect state → PID (flies exactly like `-c controllers/pid.py`) |
+| `gps_imu_pid.py` | IMU + GPS → complementary filter → PID (outdoor) |
+| `mocap_phri.py` | IMU + motion capture → filter → PHRI planner (indoor swarm) |
+| `manual_gps.py` | IMU + GPS → filter → manual controller, for `--live` |
+
+A minimal stack file looks like this:
 
 ```python
 from drone_sim.nodes import ControllerNode, Gps, GpsImuEstimator, Imu
@@ -112,6 +160,11 @@ publishes `ground_truth`, `setpoint`, `sticks`, and `/swarm`, and applies
 | `PerfectState` (no sensors; same as a plain controller) | `ground_truth` | `state_estimate` |
 | `GpsImuEstimator`, `MocapImuEstimator` (complementary filters) | `imu` + `gps` / `mocap` | `state_estimate` |
 | `ControllerNode(controller)` | `state_estimate`, `setpoint`, `/swarm`, `sticks` | `motor_command` |
+
+Both estimators build on `InertialEstimator`, which integrates the IMU
+between position fixes. Messages are defined in `drone_sim/nodes/msgs.py`.
+With `--graph`, a plain controller (`-c controllers/pid.py`) is drawn as
+its equivalent stack: perfect state → controller.
 
 ### Writing a node
 
@@ -345,6 +398,45 @@ for _ in range(500):      # 2 s at 250 Hz
 print(sim.state.pos)
 ```
 
+## Command-line options
+
+`python -m drone_sim --help` prints the same list.
+
+| Option | Default | |
+|---|---|---|
+| `-c`, `--controller FILE[:Class]` | `controllers/pid.py` (`manual.py` with `--live`) | controller or stack file; repeat for one drone each |
+| `-n`, `--drones N` | one per `-c` | number of drones; with a single `-c`, each drone gets its own copy |
+| `--layout line\|circle` | `line` | side by side flying the scenario, or circle swap |
+| `--spacing M` | 1.0 | distance between drones in the line layout [m] |
+| `--radius M` | 4.0 | circle layout radius [m] |
+| `--ghost` | off | drones that touch pass through each other instead of crashing |
+| `-s`, `--scenario NAME` | `step` | `hover`, `step`, `square`, `figure8`, `helix`, `spin` |
+| `-d`, `--duration S` | 12 | simulated seconds (ignored with `--live`) |
+| `--control-hz HZ` | 250 | controller rate (physics runs at 1 kHz) |
+| `--wind X [Y [Z]]` | 0 | steady wind force [N] |
+| `--gust N` | 0 | gust strength, std dev per horizontal axis [N] |
+| `--noise SIGMA` | 0 | Gaussian noise added to every component of the state the controller is given |
+| `--seed N` | 0 | random seed for gusts and noise |
+| `--live` | off | fly in real time with the keyboard |
+| `--speed X` | 1.0 | playback speed multiplier |
+| `--save FILE` | | write the animation to `.gif`, or `.mp4` (needs ffmpeg) |
+| `--no-gui` | off | print metrics only |
+| `--graph` | off | show each drone's node graph instead of the flight |
+| `--graph-out FILE` | | write the node graph: `.png`, `.svg`, `.pdf`, `.dot`, or `.mmd` |
+
+`--live` can't be combined with `--save` or `--no-gui`.
+
+## Running the tests
+
+```bash
+pip install pytest
+python -m pytest tests/
+```
+
+The PHRI tests are skipped if `cvxpy` isn't installed.
+`tests/test_web_bridge.py` runs the web app's Python bridge under CPython, so
+the suite also catches simulator changes that would break the web app.
+
 ## Layout
 
 ```
@@ -379,3 +471,7 @@ nothing outside `graphics/` imports it, and a test enforces that controllers
 and the simulator load without matplotlib. A new front end needs an
 `animate(results, collisions=...)` and a `fly(session)`; see
 `drone_sim/graphics/__init__.py`.
+
+## License
+
+MIT; see [LICENSE](LICENSE).
