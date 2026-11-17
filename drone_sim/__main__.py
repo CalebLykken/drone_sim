@@ -48,10 +48,11 @@ def main(argv=None):
     )
 
     if args.live:
-        from .live import fly
+        from .graphics.live import fly
+        from .session import LiveSession
 
         sim = Simulator(controller, config)
-        fly(sim)
+        fly(LiveSession(sim))
         if sim.k == 0:
             return
         result = sim.result()
@@ -64,7 +65,7 @@ def main(argv=None):
 
     if args.no_gui or args.live:
         return
-    from .viz import animate
+    from .graphics.playback import animate
 
     if args.save:
         animate(result, speed=args.speed, save=args.save)
