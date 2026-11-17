@@ -186,7 +186,7 @@ def test_core_and_controllers_do_not_import_graphics():
     code = (
         "import sys, drone_sim, drone_sim.control, drone_sim.session\n"
         "from drone_sim import load_controller, run, SimConfig\n"
-        "for name in ('pid', 'manual', 'hover_only'):\n"
+        "for name in ('pid', 'manual', 'hover_only', 'phri'):\n"
         f"    run(load_controller({str(ROOT / 'controllers')!r} + f'/{{name}}.py'), SimConfig(duration=0.1))\n"
         "bad = sorted(m for m in sys.modules if m.startswith(('matplotlib', 'drone_sim.graphics')))\n"
         "assert not bad, bad\n"
@@ -364,3 +364,159 @@ def test_live_session_pilots_the_first_drone():
     assert sim.drones[0].controller.sticks.throttle > 0.9
     assert sim.drones[1].controller.sticks == Sticks()
     assert sim.drones[0].state.z > 0.5 and sim.drones[1].state.z > 0.5
+
+
+# --- Graphics smoke tests (headless) ---------------------------------------------
+
+@pytest.fixture
+def agg():
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    yield plt
+    plt.close("all")
+
+
+def test_playback_draws_every_drone(agg):
+    from drone_sim.graphics.playback import animate
+
+    (a, b), collisions = head_on()
+    anim = animate([a, b], collisions=collisions)
+    ax3 = agg.gcf().axes[0]
+    agg.gcf().canvas.draw()  # the first draw starts the animation at frame 0
+    for k in (0, len(a.t) // 2, len(a.t) - 1):
+        anim._func(k)
+    labels = {t.get_text() for t in ax3.texts}
+    assert {"A (crashed)", "B (crashed)"} <= labels
+    stars = [l for l in ax3.lines if l.get_marker() == "*"]
+    assert any(len(l.get_data_3d()[0]) for l in stars)  # collision marked
+    assert len(agg.gcf().axes[1].lines) >= 2  # one line per drone in the plots
+
+
+def test_playback_single_result_still_works(agg):
+    from drone_sim.graphics.playback import animate
+
+    anim = animate(run(load_controller(PID_PATH), SimConfig(duration=1.0)))
+    anim._func(10)
+    agg.gcf().canvas.draw()
+    assert agg.gcf().axes[1].get_ylabel() == "position [m]"
+
+
+@pytest.mark.filterwarnings("ignore:FigureCanvasAgg is non-interactive")
+def test_live_window_draws_every_drone(agg):
+    from drone_sim.graphics.live import fly
+    from drone_sim.session import LiveSession
+
+    sim = Simulator(drones=[
+        DroneSpec(load_controller(str(ROOT / "controllers" / "manual.py")), initial_state=at(0), name="you"),
+        DroneSpec(load_controller(PID_PATH), initial_state=at(1), name="near"),
+        DroneSpec(load_controller(PID_PATH), initial_state=at(30), name="far"),
+    ])
+    anim = fly(LiveSession(sim))
+    anim._func(0)
+    agg.gcf().canvas.draw()
+    labels = {t.get_text(): t.get_visible() for t in agg.gcf().axes[0].texts if t.get_text() in ("you", "near", "far")}
+    assert labels == {"you": True, "near": True, "far": False}  # far is outside the chase view
+
+
+# --- Prosocial planning (PHRI) -------------------------------------------------------
+
+PHRI_PATH = str(ROOT / "controllers" / "phri.py")
+
+
+def phri_agents(params, a_start, a_goal, b_start, b_goal):
+    from drone_sim.phri import GameAgent
+
+    def agent(name, start, goal):
+        return GameAgent(name, np.r_[start, 0, 0, 0].astype(float), np.r_[goal, 0, 0, 0].astype(float), params)
+
+    return [agent("A", a_start, a_goal), agent("B", b_start, b_goal)]
+
+
+def test_phri_head_on_both_keep_right_and_share_the_detour():
+    pytest.importorskip("cvxpy")
+    from drone_sim.phri import GameCache, PHRIParams, PHRIPlanner, convenience
+
+    GameCache.clear()
+    p = PHRIParams()
+    planner = PHRIPlanner(p)
+    for _ in range(3):  # a few receding-horizon replans from the same spot
+        game = phri_agents(p, [-4, 0, 1.5], [4, 0, 1.5], [4, 0, 1.5], [-4, 0, 1.5])
+        planner.plan(game)
+    a, b = game
+    assert planner.last_stats.failures == 0
+    sep = np.linalg.norm(a.xs[:, :3] - b.xs[:, :3], axis=1)
+    assert sep.min() > 0.9 * p.collision_radius
+    # A flies +x so its right is -y; B flies -x so its right is +y. Equal shares.
+    assert a.xs[-1, 1] < -0.3 and b.xs[-1, 1] > 0.3
+    assert a.xs[-1, 1] == pytest.approx(-b.xs[-1, 1], abs=0.02)
+    for agent in (a, b):  # the inconvenience budget holds
+        assert convenience(agent.xs, agent.goal, p.inconvenience_weights) <= agent.budget + p.budget_floor + 1e-3
+
+
+def test_phri_identical_games_are_shared_not_resolved():
+    pytest.importorskip("cvxpy")
+    from drone_sim.phri import GameCache, PHRIParams, PHRIPlanner
+
+    GameCache.clear()
+    p = PHRIParams()
+    first, second = PHRIPlanner(p), PHRIPlanner(p)
+    game_a = phri_agents(p, [-4, 0.3, 1.5], [4, 0, 1.5], [4, 0, 1.5], [-4, 0, 1.5])
+    game_b = list(reversed(phri_agents(p, [-4, 0.3, 1.5], [4, 0, 1.5], [4, 0, 1.5], [-4, 0, 1.5])))
+    first.plan(game_a)
+    second.plan(game_b)  # B's point of view, same game
+    assert not first.last_stats.cached and second.last_stats.cached
+    by_name = {g.name: g for g in game_b}
+    assert np.array_equal(by_name["A"].xs, game_a[0].xs)
+
+
+def swap_flight(ctrl_a, ctrl_b, duration=10.0):
+    specs = [
+        DroneSpec(load_controller(ctrl_a), initial_state=at(-4), name="A",
+                  target_fn=lambda t: (-4.0, 0.0, 1.5) if t < 2 else (4.0, 0.0, 1.5)),
+        DroneSpec(load_controller(ctrl_b), initial_state=at(4), name="B",
+                  target_fn=lambda t: (4.0, 0.0, 1.5) if t < 2 else (-4.0, 0.0, 1.5)),
+    ]
+    return run_many(specs, SimConfig(duration=duration))
+
+
+def test_phri_drones_swap_places_without_colliding():
+    pytest.importorskip("cvxpy")
+    (_, _), pid_collisions = swap_flight(PID_PATH, PID_PATH)
+    assert pid_collisions  # the baseline crashes head-on
+
+    (a, b), collisions = swap_flight(PHRI_PATH, PHRI_PATH)
+    assert collisions == []
+    assert np.linalg.norm(a.pos - b.pos, axis=1).min() > 0.8
+    assert a.metrics()["final_pos_error_m"] < 0.2 and b.metrics()["final_pos_error_m"] < 0.2
+
+
+def test_phri_avoids_a_drone_that_does_not_cooperate():
+    pytest.importorskip("cvxpy")
+    (a, b), collisions = swap_flight(PHRI_PATH, PID_PATH)
+    assert collisions == []
+    assert a.metrics()["final_pos_error_m"] < 0.2
+
+
+def test_phri_non_interactive_baseline_runs():
+    pytest.importorskip("cvxpy")
+    from drone_sim.phri import GameCache, PHRIParams, PHRIPlanner
+
+    GameCache.clear()
+    p = PHRIParams()
+    planner = PHRIPlanner(p, ibr_iterations=1)
+    game = phri_agents(p, [-4, 0.2, 1.5], [4, 0, 1.5], [4, 0, 1.5], [-4, 0, 1.5])
+    planner.plan(game)
+    assert planner.last_stats.failures == 0
+    assert planner.last_stats.solves == 2 * (p.ideal_iterations + 5)
+
+
+def test_neighbors_see_each_others_targets():
+    a, b = Recorder(), Recorder()
+    sim = Simulator(drones=[DroneSpec(a, initial_state=at(0), name="alpha", target_fn=lambda t: (1, 2, 3)),
+                            DroneSpec(b, initial_state=at(3), name="bravo", target_fn=lambda t: (4, 5, 6, 0.5))])
+    sim.step()
+    assert b.others[0].target == (1.0, 2.0, 3.0, 0.0)
+    assert a.others[0].target == (4.0, 5.0, 6.0, 0.5)  # set before alpha's controller ran

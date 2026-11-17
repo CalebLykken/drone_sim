@@ -40,6 +40,10 @@ class Neighbor:
     name: str
     state: State  # true state (no sensor noise), at the same instant as yours
     crashed: bool = False
+    # Where it is trying to go, (x, y, z, yaw). This is privileged information
+    # (a real drone would have to infer it), as assumed by planners such as
+    # drone_sim.phri that model the other agents' goals.
+    target: tuple[float, float, float, float] | None = None
 
 
 class Controller:

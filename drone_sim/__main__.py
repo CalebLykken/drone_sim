@@ -12,6 +12,22 @@ from .sim import SCENARIOS, DroneSpec, SimConfig, Simulator, load_controller, of
 CONTROLLERS = Path(__file__).resolve().parent.parent / "controllers"
 
 
+CIRCLE_ALTITUDE = 1.5  # m
+CIRCLE_TAKEOFF = 2.0  # s, hover in place before crossing
+
+
+def circle_swap(i: int, n: int, radius: float):
+    """Start position and target for drone i of n in the circle-swap benchmark:
+    take off in place, then fly to the opposite side of the circle."""
+    a = 2 * np.pi * i / n
+    x, y = radius * np.cos(a), radius * np.sin(a)
+
+    def target(t: float):
+        return (x, y, CIRCLE_ALTITUDE) if t < CIRCLE_TAKEOFF else (-x, -y, CIRCLE_ALTITUDE)
+
+    return (x, y, 0.0), target
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="drone_sim", description=__doc__)
     ap.add_argument("-c", "--controller", action="append",
@@ -20,6 +36,11 @@ def main(argv=None):
     ap.add_argument("-n", "--drones", type=int,
                     help="number of drones (default: one per --controller); with a single "
                          "--controller, every drone flies a copy of it")
+    ap.add_argument("--layout", choices=["line", "circle"], default="line",
+                    help="line: side by side, each flying the scenario shifted by its offset; "
+                         "circle: evenly around a circle, each taking off and then flying to the "
+                         "opposite side (ignores --scenario)")
+    ap.add_argument("--radius", type=float, default=4.0, help="circle layout radius [m]")
     ap.add_argument("--spacing", type=float, default=1.0,
                     help="drones start side by side this far apart [m] and fly the scenario "
                          "shifted by the same amount")
@@ -61,11 +82,15 @@ def main(argv=None):
     scenario = SCENARIOS[args.scenario]
     specs = []
     for i, path in enumerate(paths):
-        y = (i - (n - 1) / 2) * args.spacing
+        if args.layout == "circle":
+            start, target_fn = circle_swap(i, n, args.radius)
+        else:
+            y = (i - (n - 1) / 2) * args.spacing
+            start, target_fn = (0.0, y, 0.0), offset_target(scenario, (0.0, y, 0.0))
         specs.append(DroneSpec(
             load_controller(path),  # a fresh instance per drone
-            initial_state=State(pos=np.array([0.0, y, 0.0])),
-            target_fn=offset_target(scenario, (0.0, y, 0.0)),
+            initial_state=State(pos=np.array(start)),
+            target_fn=target_fn,
         ))
     config = SimConfig(
         duration=args.duration,
@@ -81,9 +106,6 @@ def main(argv=None):
         sim = Simulator(drones=specs, config=config)
     except ValueError as e:
         ap.error(f"{e} (try a bigger --spacing, or --ghost)")
-    show = not (args.no_gui or args.save)
-    if n > 1 and (show or args.live or args.save):
-        print("note: the graphics currently draw only the first drone", file=sys.stderr)
 
     if args.live:
         from .graphics.live import fly
@@ -96,7 +118,7 @@ def main(argv=None):
         for _ in range(int(round(config.duration / sim.control_dt))):
             sim.step()
 
-    print(f"scenario: {args.scenario}")
+    print("layout: circle swap" if args.layout == "circle" else f"scenario: {args.scenario}")
     for d, r in zip(sim.drones, sim.results()):
         print(f"{d.name}  controller: {type(d.controller).__name__}")
         for k, v in r.metrics().items():
@@ -106,16 +128,16 @@ def main(argv=None):
 
     if args.no_gui or args.live:
         return
-    result = sim.result()
+    results = sim.results()
     from .graphics.playback import animate
 
     if args.save:
-        animate(result, speed=args.speed, save=args.save)
+        animate(results, speed=args.speed, save=args.save, collisions=sim.collisions)
         print(f"saved {args.save}")
     else:
         import matplotlib.pyplot as plt
 
-        anim = animate(result, speed=args.speed)  # noqa: F841 (keep a reference alive)
+        anim = animate(results, speed=args.speed, collisions=sim.collisions)  # noqa: F841 (keep a reference alive)
         plt.show()
 
 
