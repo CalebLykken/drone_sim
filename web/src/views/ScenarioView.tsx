@@ -6,9 +6,11 @@ import { type ChartSeries, TimeChart } from "../components/TimeChart";
 import { controllers, useControllerList } from "../controllers";
 import { sim } from "../sim/client";
 import type { PlaybackResult, SimInfo, SimOptions } from "../sim/protocol";
-import { createStore, type Store, useDarkMode, useStore } from "../store";
-import { droneColor, HIVIS, scenarioLabel, seriesColors } from "../theme";
-import { DroneModel, GroundShadow, PathLine, TargetMarker, TargetPath, World } from "../three/scene";
+import { ScenerySelects } from "../components/Scenery";
+import { createStore, type Store, timeStore, useDarkMode, useStore, worldStore } from "../store";
+import { droneColor, HIVIS, SCENE, scenarioLabel, seriesColors } from "../theme";
+import { DroneModel, GroundShadow, PathLine, TargetMarker, TargetPath } from "../three/scene";
+import { World } from "../three/world";
 
 interface Form {
   scenario: string;
@@ -199,6 +201,7 @@ export function ScenarioView({
             ))}
           </select>
         </label>
+        <ScenerySelects />
         <div className="split">
           <NumberField label="Duration" unit="s" value={form.duration} min={1} max={60} step={1} onChange={(v) => update("duration", v)} />
           <NumberField label="Drones" value={form.drones} min={1} max={6} step={1} onChange={(v) => update("drones", v)} />
@@ -337,6 +340,8 @@ function indexAt(result: PlaybackResult, t: number) {
 
 function PlaybackScene({ result, clock }: { result: PlaybackResult; clock: Store<number> }) {
   const dark = useDarkMode();
+  const world = useStore(worldStore);
+  const time = useStore(timeStore);
   const at = () => indexAt(result, clock.get());
   const slice = (a: Float64Array, stride: number) => {
     const k = at();
@@ -345,7 +350,7 @@ function PlaybackScene({ result, clock }: { result: PlaybackResult; clock: Store
   return (
     <div className="stage-canvas">
       <Canvas dpr={[1, 2]} camera={{ fov: 45, near: 0.05, far: 400, up: [0, 0, 1], position: [6, -8, 5] }}>
-        <World dark={dark} />
+        <World kind={world} time={time} />
         <OrbitControls makeDefault enableDamping dampingFactor={0.12} maxPolarAngle={Math.PI * 0.495} />
         <FitCamera result={result} />
         {result.drones.map((d, i) => (
@@ -353,8 +358,8 @@ function PlaybackScene({ result, clock }: { result: PlaybackResult; clock: Store
             <TargetPath target={d.target} />
             <TargetMarker getTarget={() => slice(d.target, 4)} />
             <PathLine points={d.pos} getCount={() => at() + 1} color={droneColor(i, dark)} />
-            <PathLine points={d.pos} getCount={() => at() + 1} color={dark ? "#000000" : "#56606a"} opacity={0.3} width={1.5} flat />
-            <GroundShadow dark={dark} getPos={() => slice(d.pos, 3)} />
+            <PathLine points={d.pos} getCount={() => at() + 1} color={SCENE[time].pathShadow} opacity={0.3} width={1.5} flat />
+            <GroundShadow time={time} getPos={() => slice(d.pos, 3)} />
             <DroneModel
               params={result.params}
               body={i === 0 ? HIVIS : droneColor(i, dark)}

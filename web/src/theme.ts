@@ -1,6 +1,8 @@
 // Colors that live in JavaScript (three.js materials, chart series). Page
 // colors are CSS custom properties in styles.css.
 
+import type { TimeOfDay } from "./store";
+
 export const HIVIS = "#f2b705"; // the piloted drone's body
 export const SIGNAL_RED = "#d64545"; // front rotors and the target X
 
@@ -19,37 +21,68 @@ export function droneColor(i: number, dark: boolean): string {
   return seriesColors(dark)[i] ?? OVERFLOW;
 }
 
-export interface SceneColors {
-  sky: string;
-  ground: string;
+/** How the 3D scene looks at one time of day. Independent of the page's light
+ * or dark theme: the sky is drawn either way. */
+export interface SceneLook {
+  zenith: string; // sky overhead
+  horizon: string; // sky at the horizon, and the fog, so far-off ground melts into it
+  sunGlow: string; // haze around the sun
+  sunDisk: string;
+  sunDirection: [number, number, number]; // toward the sun, in the sim's frame (x forward, z up)
+  sunLight: string;
+  sunIntensity: number;
+  skyLight: string; // hemisphere light from above
+  groundLight: string; // and bounced from below
+  ambientIntensity: number;
+  ground: string; // the grid world's floor
   grid: string;
   gridMajor: string;
   pad: string;
-  skyLight: string;
-  groundLight: string;
-  shadow: string;
+  shadow: string; // spot under each drone
+  shadowOpacity: number;
+  pathShadow: string; // flight path projected on the ground
 }
 
-export const SCENE: Record<"light" | "dark", SceneColors> = {
-  light: {
-    sky: "#dde5ec",
+export const SCENE: Record<TimeOfDay, SceneLook> = {
+  day: {
+    zenith: "#5f93cf",
+    horizon: "#dde5ec",
+    sunGlow: "#fff4dc",
+    sunDisk: "#fffaf0",
+    sunDirection: [5, -7, 12],
+    sunLight: "#ffffff",
+    sunIntensity: 1.8,
+    skyLight: "#f3f7fb",
+    groundLight: "#9aa596",
+    ambientIntensity: 1.4,
     ground: "#c9d1c6",
     grid: "#b4beb2",
     gridMajor: "#8f9b8d",
     pad: "#f7f9fa",
-    skyLight: "#f3f7fb",
-    groundLight: "#9aa596",
     shadow: "#27313a",
+    shadowOpacity: 0.28,
+    pathShadow: "#56606a",
   },
-  dark: {
-    sky: "#141a21",
-    ground: "#1b232b",
-    grid: "#26313b",
-    gridMajor: "#36434f",
-    pad: "#2b3540",
-    skyLight: "#9fb3c8",
-    groundLight: "#1b232b",
-    shadow: "#000000",
+  // Sun low, ahead and to the left of where the Fly camera starts (looking
+  // along +x), so you take off toward the sunset with the trees lit from the side.
+  evening: {
+    zenith: "#2f4270",
+    horizon: "#d9a68f",
+    sunGlow: "#ffa057",
+    sunDisk: "#fff1cf",
+    sunDirection: [1, 0.7, 0.12],
+    sunLight: "#ffb578",
+    sunIntensity: 3.0,
+    skyLight: "#c4c0e2",
+    groundLight: "#86705a",
+    ambientIntensity: 2.2,
+    ground: "#8c8577",
+    grid: "#7d766a",
+    gridMajor: "#655f55",
+    pad: "#f1e2cf",
+    shadow: "#1d1410",
+    shadowOpacity: 0.35,
+    pathShadow: "#3a2e29",
   },
 };
 
