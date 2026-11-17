@@ -293,19 +293,20 @@ class Simulator:
         raise KeyError(name)
 
     def _neighbors(self, me: Drone) -> tuple[Neighbor, ...]:
-        return tuple(Neighbor(d.name, d.state, d.crashed) for d in self.drones if d is not me)
+        return tuple(Neighbor(d.name, d.state, d.crashed, d.target) for d in self.drones if d is not me)
 
     def step(self) -> None:
         """Advance one control period: call every controller once, then physics."""
         cfg, t = self.config, self.t
 
-        commands = []
+        # Everyone's target first, so controllers see their neighbors' current goals.
         for d in self.drones:
             target = tuple(float(v) for v in d.target_fn(t))
-            if len(target) == 3:
-                target = (*target, 0.0)
-            d.target = target
+            d.target = target if len(target) == 4 else (*target, 0.0)
 
+        commands = []
+        for d in self.drones:
+            target = d.target
             if d.crashed:
                 commands.append(np.zeros(4))
                 continue

@@ -14,6 +14,7 @@ controller as a Python class, point the sim at the file, and watch it fly.
 ## Quick start
 
 Requires Python 3.10+, `numpy`, and `matplotlib` (`pip install numpy matplotlib`).
+The PHRI controller also needs `cvxpy` (`pip install cvxpy`).
 
 ```bash
 python -m drone_sim                                   # example controller, step scenario
@@ -71,6 +72,57 @@ Each drone needs its own controller instance. Inside a controller,
 collision-avoidance controllers. `Simulator(drones=[...])` steps them one
 control period at a time; `sim.drones`, `sim.drone("leader")`,
 `sim.results()`, and `sim.collisions` give per-drone access.
+
+## Prosocial planning (PHRI)
+
+`controllers/phri.py` implements the planner from
+
+> J. Geldenbott and K. Leung, *Legible and Proactive Robot Planning for
+> Prosocial Human-Robot Interactions*, ICRA 2024.
+> [arXiv:2404.03734](https://arxiv.org/abs/2404.03734) ·
+> [paper code (PHRI.jl)](https://github.com/UW-CTRL/PHRI.jl) ·
+> [multi-agent IBR (ProactiveHRI.jl, `multi_ibr_dev`)](https://github.com/UW-CTRL/ProactiveHRI.jl/tree/multi_ibr_dev)
+
+extended to any number of drones with iterated best response, as on the
+`multi_ibr_dev` branch.
+
+```bash
+python -m drone_sim -c controllers/phri.py --layout circle -n 4   # 4 drones cross a circle
+python -m drone_sim -c controllers/pid.py  --layout circle -n 4   # same with PID: they crash
+python -m drone_sim --live -n 2 -c controllers/manual.py -c controllers/phri.py --layout circle
+```
+
+Every 0.1 s each PHRI drone solves a game with every drone around it:
+
+- **Ideal problem:** reach the goal ignoring everyone. Its cost c(τ_ideal)
+  sets the **inconvenience budget** (1 + β)·c(τ_ideal), so no agent has to
+  give way more than its share.
+- **Inconvenience problem:** the same plus a **markup** μ^t on running costs
+  (μ > 1 rewards avoiding early, making intent legible and the drone
+  proactive), linearized **collision avoidance** with discounted slack, the
+  budget constraint, and a trust region, solved by sequential convex
+  programming.
+- **Iterated best response:** every agent re-plans against the others'
+  latest plans, 3 rounds by default (`ibr_iterations = 1` gives the paper's
+  non-interactive baseline). The drone flies the first part of its plan with
+  the usual attitude controller.
+
+Other drones are modeled as running the same planner toward their current
+targets (exposed to controllers as `Neighbor.target`, the "privileged
+information" the paper assumes), whatever controller they really run, so a
+PHRI drone also avoids PID drones or a human pilot. Settings are class
+attributes on `Prosocial` (`params`, `other_params`, `ibr_iterations`,
+`order`, `interaction_radius`); planner hyperparameters live in
+`drone_sim.phri.PHRIParams` and default to the paper's values.
+
+Differences from the Julia code, since these are drones: the planner uses a
+3D double integrator instead of a unicycle, so drones can also pass over or
+under each other; a soft altitude floor; and a 2 cm "keep right" nudge so
+perfectly symmetric head-on encounters still resolve. Drones running the
+planner share identical game solves (`GameCache`), so cost grows linearly
+with the number of drones (about 0.45 s of compute per drone per simulated
+second on an M1 Mac). Requires `cvxpy` (Clarabel by default; set
+`PHRIParams(solver="ECOS")` for the paper's solver).
 
 ## Flying it yourself
 
@@ -184,6 +236,7 @@ drone_sim/
   dynamics.py     DroneParams, State, equations of motion, motor model, rotation helpers
   controller.py   Controller base class (the interface you implement) and Sticks
   control.py      helpers: thrust vector -> attitude -> rotor thrusts
+  phri.py         prosocial multi-agent planner (PHRI paper, IBR)
   sim.py          Simulator, run(), scenarios, wind/noise, controller loader
   session.py      LiveSession: keys -> sticks, real-time stepping (no graphics)
   graphics/       everything that draws (the only code that imports matplotlib)
