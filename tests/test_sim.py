@@ -6,7 +6,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from drone_sim import Controller, DroneParams, SimConfig, Simulator, State, Sticks, load_controller, run
+from drone_sim import (
+    Controller, DroneParams, DroneSpec, SimConfig, Simulator, State, Sticks,
+    load_controller, offset_target, run, run_many,
+)
 from drone_sim.dynamics import euler_to_quat, quat_to_rot, rot_to_euler
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -231,3 +234,133 @@ def test_live_session_caps_stalls_and_resets():
     session.key_down("r")
     assert session.sim.k == 0 and session.sticks == Sticks()
     assert "r" not in session.pressed
+
+
+# --- Multiple drones ---------------------------------------------------------------
+
+PID_PATH = str(ROOT / "controllers" / "pid.py")
+
+
+def at(x, y=0.0, z=0.0):
+    return State(pos=np.array([x, y, z], dtype=float))
+
+
+def test_single_drone_api_matches_multi_drone_with_one_drone():
+    cfg = SimConfig(scenario="square", duration=3.0, wind_gust=0.5, sensor_noise=0.002)
+    single = run(load_controller(PID_PATH), cfg)
+    (multi,), collisions = run_many([DroneSpec(load_controller(PID_PATH))], cfg)
+    assert np.array_equal(single.states, multi.states)
+    assert np.array_equal(single.commands, multi.commands)
+    assert collisions == []
+
+
+def test_formation_drones_fly_independently():
+    scenario = lambda t: (0.0, 0.0, 1.0) if t < 1.5 else (1.0, 0.5, 1.5)  # noqa: E731
+    specs = [
+        DroneSpec(load_controller(PID_PATH), initial_state=at(0, y), target_fn=offset_target(scenario, (0, y, 0)))
+        for y in (-1.0, 0.0, 1.0)
+    ]
+    results, collisions = run_many(specs, SimConfig(duration=4.0))
+    assert collisions == []
+    assert [r.name for r in results] == ["drone0", "drone1", "drone2"]
+    # Same controller and wind, so identical flights shifted sideways.
+    for r, y in zip(results, (-1.0, 0.0, 1.0)):
+        assert r.pos - [0, y, 0] == pytest.approx(results[1].pos, abs=1e-9)
+        assert r.metrics()["final_pos_error_m"] < 0.2
+
+
+def test_each_drone_can_have_its_own_params():
+    specs = [
+        DroneSpec(load_controller(PID_PATH), initial_state=at(0)),
+        DroneSpec(load_controller(PID_PATH), initial_state=at(2), params=DroneParams(mass=1.5),
+                  target_fn=lambda t: (2.0, 0.0, 1.0)),
+    ]
+    sim = Simulator(drones=specs, config=SimConfig(scenario="hover"))
+    for _ in range(250):
+        sim.step()
+    light, heavy = sim.results()
+    assert heavy.params.mass == 1.5
+    assert heavy.thrusts[-1].sum() > light.thrusts[-1].sum() * 1.3
+
+
+class Recorder(Controller):
+    def reset(self, params):
+        self.seen = []
+        self.hover = params.hover_thrust
+
+    def update(self, t, state, target, dt):
+        self.seen.append({n.name: n.state.x for n in self.others})
+        return [self.hover] * 4
+
+
+def test_controllers_see_the_other_drones():
+    a, b = Recorder(), Recorder()
+    sim = Simulator(drones=[DroneSpec(a, initial_state=at(0), name="alpha"),
+                            DroneSpec(b, initial_state=at(3), name="bravo")])
+    sim.step()
+    assert (a.name, b.name) == ("alpha", "bravo")
+    assert a.seen == [{"bravo": 3.0}] and b.seen == [{"alpha": 0.0}]
+    assert sim.drone("bravo").controller is b
+    assert run(Recorder(), SimConfig(duration=0.01)) is not None  # alone: others == ()
+
+
+def head_on(**config):
+    specs = [
+        DroneSpec(load_controller(PID_PATH), initial_state=at(x), name=name,
+                  target_fn=lambda t, x=x: (x, 0.0, 1.5) if t < 2 else (-x, 0.0, 1.5))
+        for x, name in ((-2.0, "A"), (2.0, "B"))
+    ]
+    return run_many(specs, SimConfig(duration=6.0, **config))
+
+
+def test_head_on_collision_crashes_both_drones():
+    (a, b), collisions = head_on()
+    assert len(collisions) == 1
+    c = collisions[0]
+    assert {c.a, c.b} == {"A", "B"} and 2.0 < c.t < 5.0
+    assert a.crashed_at == b.crashed_at == c.t
+    assert a.metrics()["crashed"] and b.metrics()["crashed"]
+    after = a.t > c.t
+    assert np.all(a.commands[after] == 0)  # motors are dead
+    assert a.pos[-1, 2] == 0.0 and b.pos[-1, 2] == 0.0  # fell to the ground
+
+
+def test_ghost_mode_records_collision_but_keeps_flying():
+    (a, b), collisions = head_on(crash_on_collision=False)
+    assert len(collisions) == 1  # recorded once, not every step they overlap
+    assert not a.metrics()["crashed"]
+    assert a.pos[-1, 0] == pytest.approx(2.0, abs=0.2)
+    assert b.pos[-1, 0] == pytest.approx(-2.0, abs=0.2)
+
+
+def test_multi_drone_setup_errors():
+    c = lambda: load_controller(PID_PATH)  # noqa: E731
+    with pytest.raises(ValueError, match="start 0.30 m apart"):
+        Simulator(drones=[DroneSpec(c(), initial_state=at(0)), DroneSpec(c(), initial_state=at(0.3))])
+    Simulator(drones=[DroneSpec(c(), initial_state=at(0)), DroneSpec(c(), initial_state=at(0.3))],
+              config=SimConfig(crash_on_collision=False))
+    with pytest.raises(ValueError, match="unique"):
+        Simulator(drones=[DroneSpec(c(), initial_state=at(0), name="x"),
+                          DroneSpec(c(), initial_state=at(2), name="x")])
+    shared = c()
+    with pytest.raises(ValueError, match="own controller"):
+        Simulator(drones=[DroneSpec(shared, initial_state=at(0)), DroneSpec(shared, initial_state=at(2))])
+    with pytest.raises(TypeError):
+        Simulator(c(), drones=[DroneSpec(c())])
+    with pytest.raises(TypeError):
+        Simulator()
+
+
+def test_live_session_pilots_the_first_drone():
+    from drone_sim.session import LiveSession
+
+    sim = Simulator(drones=[
+        DroneSpec(load_controller(str(ROOT / "controllers" / "manual.py")), initial_state=at(0)),
+        DroneSpec(load_controller(PID_PATH), initial_state=at(0, 2), target_fn=lambda t: (0, 2, 1)),
+    ])
+    session = LiveSession(sim)
+    session.key_down("up")
+    tick_for(session, 1.0)
+    assert sim.drones[0].controller.sticks.throttle > 0.9
+    assert sim.drones[1].controller.sticks == Sticks()
+    assert sim.drones[0].state.z > 0.5 and sim.drones[1].state.z > 0.5
