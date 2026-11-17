@@ -11,7 +11,7 @@ Write a subclass in any .py file and pass its path to the simulator:
             self.hover = params.hover_thrust
 
         def update(self, t, state, target, dt):
-            return self.hover, self.hover   # (left, right) thrust in newtons
+            return [self.hover] * 4   # FL, FR, BR, BL thrust in newtons
 """
 
 from .dynamics import DroneParams, State
@@ -24,6 +24,9 @@ class Controller:
     control rate (SimConfig.control_hz). Commands are clipped to
     [0, params.max_thrust] and pass through the motor lag before acting on
     the drone, just like real ESCs and props.
+
+    Tip: compute a total thrust and a body torque, then let
+    `params.allocate(total_thrust, torque)` split it across the four rotors.
     """
 
     def reset(self, params: DroneParams) -> None:
@@ -33,14 +36,15 @@ class Controller:
         self,
         t: float,
         state: State,
-        target: tuple[float, float],
+        target: tuple[float, float, float, float],
         dt: float,
-    ) -> tuple[float, float]:
-        """Return (left, right) rotor thrust commands in newtons.
+    ):
+        """Return four rotor thrust commands in newtons: (FL, FR, BR, BL).
 
         t:      sim time in seconds
-        state:  measured state (with sensor noise, if enabled)
-        target: desired (x, z) position in meters
+        state:  measured State (.pos .vel .quat .omega, plus .R and .euler),
+                with sensor noise if enabled
+        target: desired (x, y, z, yaw) in meters and radians
         dt:     seconds since the previous update
         """
         raise NotImplementedError

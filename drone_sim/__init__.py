@@ -1,4 +1,4 @@
-"""Planar quadrotor simulator with pluggable Python controllers."""
+"""3D quadrotor simulator with pluggable Python controllers."""
 
 from .controller import Controller
 from .dynamics import DroneParams, State
