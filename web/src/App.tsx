@@ -5,11 +5,14 @@ import type { PlaybackResult } from "./sim/protocol";
 import { ControllersView } from "./views/ControllersView";
 import { FlyView } from "./views/FlyView";
 import { ScenarioView } from "./views/ScenarioView";
+import { StacksView } from "./views/StacksView";
+import { stacks } from "./stacks";
 
 const TABS = [
   { id: "fly", label: "Fly" },
   { id: "scenarios", label: "Scenarios" },
   { id: "controllers", label: "Controllers" },
+  { id: "stacks", label: "Stacks" },
 ] as const;
 type Tab = (typeof TABS)[number]["id"];
 
@@ -26,6 +29,7 @@ export function App() {
   const [flyController, setFlyController] = useState(() => pick("manual.py"));
   const [scenarioController, setScenarioController] = useState(() => pick("pid.py"));
   const [editing, setEditing] = useState(() => pick("pid.py"));
+  const [stack, setStack] = useState(() => (stacks.has("gps_imu_pid.py") ? "gps_imu_pid.py" : (stacks.list()[0]?.name ?? "")));
   const [result, setResult] = useState<PlaybackResult | null>(null);
   const [pendingRun, setPendingRun] = useState(false);
 
@@ -102,6 +106,8 @@ export function App() {
             autoRun={pendingRun}
             onAutoRun={() => setPendingRun(false)}
           />
+        ) : tab === "stacks" ? (
+          <StacksView info={status.info} selected={stack} onSelect={setStack} />
         ) : (
           <ControllersView
             selected={editing}

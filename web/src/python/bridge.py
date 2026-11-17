@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 
 from drone_sim import DroneParams, DroneSpec, SimConfig, Simulator, State, load_controller, offset_target
+from drone_sim.editor import EditError, StackEditor
 from drone_sim.session import LiveSession
 from drone_sim.sim import SCENARIOS
 
@@ -30,6 +31,10 @@ from drone_sim.sim import SCENARIOS
 sys.dont_write_bytecode = True
 
 CONTROLLER_DIR = Path(tempfile.gettempdir()) / "drone_sim_web_controllers"
+# The Stacks tab works on a copy of the repo layout, so a stack file's
+# CONTROLLERS = Path(__file__).parent.parent / "controllers" finds the page's
+# current controllers (including edits made in the browser).
+STACK_ROOT = Path(tempfile.gettempdir()) / "drone_sim_web_stacks"
 MAX_DRONES = 10
 LIVE_LOG_KEEP = 2000  # control steps of log kept per drone while flying live
 
@@ -237,3 +242,61 @@ class Live:
                 "crashed": d.crashed,
             } for d in sim.drones],
         })
+
+
+# --- Stacks tab --------------------------------------------------------------------
+
+_stack: StackEditor | None = None
+
+
+def _file_name(name: str) -> str:
+    name = Path(str(name)).name
+    if not name.endswith(".py") or not name[:-3].isidentifier():
+        raise ValueError(f"file names look like my_file.py, not {name!r}")
+    return name
+
+
+def stack_open(request_json: str) -> str:
+    """Open a stack for editing: {"name", "source", "controllers": [{"name", "source"}]}.
+    Returns the editor state plus the catalog of node types that can be added."""
+    global _stack
+    req = json.loads(request_json)
+    controllers = STACK_ROOT / "controllers"
+    controllers.mkdir(parents=True, exist_ok=True)
+    for c in req.get("controllers", []):
+        (controllers / _file_name(c["name"])).write_text(str(c["source"]))
+    stacks = STACK_ROOT / "stacks"
+    stacks.mkdir(parents=True, exist_ok=True)
+    path = stacks / _file_name(req["name"])
+    path.write_text(str(req["source"]))
+    try:
+        _stack = StackEditor(path, root=STACK_ROOT)
+    except EditError as e:
+        _stack = None
+        return json.dumps({"ok": False, "error": str(e)})
+    return json.dumps({"ok": True, **_stack.state(), "catalog": _stack.catalog()})
+
+
+def stack_edit(request_json: str) -> str:
+    """Change the open stack. {"op": "add", "key", "params"}, {"op": "update",
+    "name", "params"}, {"op": "remove", "name"}, or {"op": "test", "scenario",
+    "duration"}. Edits that would break the stack come back as {"ok": false,
+    "error"} and leave it unchanged."""
+    if _stack is None:
+        raise RuntimeError("no stack is open")
+    req = json.loads(request_json)
+    op = req.get("op")
+    try:
+        if op == "add":
+            state = _stack.add(str(req["key"]), dict(req.get("params", {})))
+        elif op == "update":
+            state = _stack.update(str(req["name"]), dict(req.get("params", {})))
+        elif op == "remove":
+            state = _stack.remove(str(req["name"]))
+        elif op == "test":
+            state = _stack.test_flight(str(req.get("scenario", "square")), float(req.get("duration", 6.0)))
+        else:
+            raise ValueError(f"unknown stack operation {op!r}")
+    except EditError as e:
+        return json.dumps({"ok": False, "error": str(e)})
+    return json.dumps({"ok": True, **state})

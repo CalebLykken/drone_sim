@@ -1,0 +1,735 @@
+/* Stacks tab: stack files, the node graph, and the properties inspector.
+   Every class here starts with stk- so it can't collide with other views.
+   File list, tags, and confirm bars follow controllers.css. */
+
+/* --- Layout ---------------------------------------------------------------------- */
+
+.stk {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr) minmax(300px, 340px);
+  grid-template-areas: "files main inspector";
+  gap: 12px;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  min-height: 520px;
+  padding: 12px;
+}
+.stk > * {
+  min-width: 0;
+  min-height: 0;
+}
+.stk-files {
+  grid-area: files;
+}
+.stk-main {
+  grid-area: main;
+}
+.stk-inspector {
+  grid-area: inspector;
+}
+
+@media (max-width: 980px) {
+  .stk {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(420px, 60vh) auto;
+    grid-template-areas: "files" "main" "inspector";
+    height: auto;
+  }
+}
+
+/* --- Shared bits ----------------------------------------------------------------- */
+
+.stk-heading {
+  margin: 0;
+  font-family: var(--font-cond);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink-2);
+}
+
+.stk code,
+.stk-mono {
+  font-family: var(--font-code);
+  font-size: 0.92em;
+}
+
+.stk-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stk .stk-danger {
+  color: var(--signal);
+}
+.stk .stk-danger-strong {
+  border-color: var(--signal);
+  background: transparent;
+  color: var(--signal);
+  font-weight: 600;
+}
+
+.stk input[type="text"] {
+  display: block;
+  width: 100%;
+  height: 34px;
+  margin: 0;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: var(--font-code);
+  font-size: 13px;
+}
+.stk input[type="text"]:hover {
+  border-color: var(--line-strong);
+}
+
+.stk-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* --- File list ------------------------------------------------------------------- */
+
+.stk-files.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.stk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.stk .stk-file {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: auto;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  font-weight: 400;
+  text-align: left;
+}
+.stk .stk-file:hover {
+  background: var(--surface-2);
+}
+.stk .stk-file[aria-current="true"] {
+  border-color: var(--line);
+  background: var(--surface-2);
+  box-shadow: inset 3px 0 0 var(--hivis);
+}
+.stk .stk-file[aria-current="true"] .stk-file-name {
+  font-weight: 600;
+}
+
+.stk-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-code);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stk-tags {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+}
+.stk-tag {
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--font-cond);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.stk-tag-yours {
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+.stk-tag-edited {
+  border-color: var(--hivis);
+  background: color-mix(in srgb, var(--hivis) 24%, transparent);
+  color: var(--ink);
+}
+
+.stk-list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stk-new {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.stk-new input[aria-invalid="true"] {
+  border-color: var(--signal);
+}
+.stk-problem {
+  margin: 0;
+  color: var(--signal);
+  font-size: 13px;
+}
+
+/* --- Main: toolbar and canvas ------------------------------------------------------ */
+
+.stk-main.panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.stk-toolbar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.stk-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.stk-title h2 {
+  overflow: hidden;
+  font-family: var(--font-code);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.stk label.stk-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.stk label.stk-inline select {
+  width: auto;
+  min-width: 110px;
+}
+.stk-duration .number {
+  width: 64px;
+}
+
+.stk .stk-busy {
+  cursor: progress;
+}
+.stk-busy::before {
+  content: "";
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: stk-spin 0.8s linear infinite;
+}
+@keyframes stk-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stk-busy::before {
+    animation-duration: 2.4s;
+  }
+}
+
+.stk-confirm {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  border-left: 3px solid var(--signal);
+  background: var(--surface-2);
+}
+.stk-confirm p {
+  flex: 1 1 200px;
+  margin: 0;
+}
+
+.stk-canvas-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background-color: var(--surface);
+  background-image: radial-gradient(var(--grid) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+.stk-canvas {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.stk-canvas:active {
+  cursor: grabbing;
+}
+.stk-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.stk-canvas-msg {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 24px;
+  color: var(--ink-2);
+  text-align: center;
+}
+.stk-load-error pre {
+  max-width: 640px;
+  text-align: left;
+  border-color: color-mix(in srgb, var(--bad) 30%, transparent);
+  background: color-mix(in srgb, var(--bad) 7%, var(--surface-2));
+  color: var(--bad);
+}
+
+/* Graph */
+.stk-edge {
+  fill: none;
+  stroke: var(--ink-2);
+  stroke-width: 1.3;
+  stroke-linejoin: round;
+}
+.stk-edge-fb {
+  stroke: var(--signal);
+  opacity: 0.8;
+}
+.stk-arrow {
+  fill: var(--ink-2);
+}
+.stk-arrow-fb {
+  fill: var(--signal);
+}
+
+.stk-v {
+  cursor: pointer;
+  outline: none;
+}
+.stk-v rect {
+  stroke-width: 1.4;
+  transition: stroke 120ms ease;
+}
+.stk-v-node rect {
+  stroke: #2b3540;
+}
+.stk-v-topic rect {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+  stroke-dasharray: 5 3;
+}
+.stk-v text {
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+}
+.stk-v-label {
+  font-family: var(--font-cond);
+  font-size: 15px;
+  font-weight: 700;
+}
+.stk-v-node .stk-v-label {
+  fill: #18212b; /* node fills are light in both themes */
+}
+.stk-v-topic .stk-v-label {
+  font-family: var(--font-code);
+  font-size: 13px;
+  font-weight: 500;
+  fill: var(--ink);
+}
+.stk-v-sub {
+  font-family: var(--font-cond);
+  font-size: 12px;
+}
+.stk-v-node .stk-v-sub {
+  fill: #3b4652;
+}
+.stk-v-topic .stk-v-sub {
+  fill: var(--muted);
+}
+@media (hover: hover) {
+  .stk-v:hover rect {
+    stroke: var(--focus);
+  }
+}
+.stk-v:focus-visible rect,
+.stk-v-selected rect {
+  stroke: var(--focus);
+  stroke-width: 3;
+}
+
+/* Overlays */
+.stk .stk-fit {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--overlay);
+}
+
+.stk-hint {
+  position: absolute;
+  right: 0;
+  bottom: 8px;
+  left: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.stk-warnings {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  max-width: min(460px, 70%);
+  margin: 0;
+  padding: 8px 12px 8px 26px;
+  border: 1px solid color-mix(in srgb, var(--hivis) 60%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--hivis) 14%, var(--surface));
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.stk-busy-note {
+  position: absolute;
+  bottom: 34px;
+  left: 50%;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--overlay);
+  color: var(--ink-2);
+  font-size: 13px;
+  transform: translateX(-50%);
+}
+
+/* Node picker (double-click empty space) */
+.stk-picker {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 300px;
+  max-height: min(440px, calc(100% - 16px));
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  cursor: default;
+  user-select: auto;
+}
+.stk-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-cond);
+  font-size: 15px;
+}
+.stk .stk-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+.stk-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.stk-picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stk-picker-group .stk-heading {
+  padding: 2px 4px;
+  font-size: 12.5px;
+}
+.stk .stk-picker-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: auto;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: var(--font);
+  font-weight: 400;
+  text-align: left;
+  white-space: normal;
+}
+.stk .stk-picker-item:hover,
+.stk .stk-picker-item:focus-visible {
+  border-color: var(--line);
+  background: var(--surface-2);
+}
+.stk-dot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  border-radius: 4px;
+}
+.stk-picker-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.stk-picker-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-cond);
+  font-size: 15px;
+  font-weight: 600;
+}
+.stk-picker-doc {
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+.stk .stk-more {
+  height: 30px;
+  font-size: 13.5px;
+}
+
+/* --- Inspector ------------------------------------------------------------------- */
+
+.stk-inspector.panel {
+  overflow-y: auto;
+}
+
+.stk-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.stk-pane p {
+  margin: 0;
+}
+
+.stk-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-family: var(--font-cond);
+  font-size: 13px;
+  font-weight: 600;
+}
+.stk-pane-title {
+  overflow-wrap: anywhere;
+}
+.stk-kind {
+  padding: 2px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 999px;
+  color: #18212b;
+  font-size: 12px;
+}
+
+.stk-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.stk-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.stk-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--font-cond);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.stk-field-name {
+  color: var(--ink);
+  font-weight: 600;
+}
+.stk-field-default {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stk-vector {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.stk-remap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+.stk .stk-add-row {
+  align-self: flex-start;
+  height: 28px;
+  font-size: 13.5px;
+}
+
+.stk-error p {
+  color: var(--bad);
+}
+.stk-error pre {
+  border-color: color-mix(in srgb, var(--bad) 30%, transparent);
+  background: color-mix(in srgb, var(--bad) 7%, var(--surface-2));
+  color: var(--bad);
+}
+
+.stk .stk-remove,
+.stk .stk-back {
+  align-self: flex-start;
+}
+
+.stk-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 14px;
+}
+.stk-facts dt {
+  color: var(--ink-2);
+}
+.stk-facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.stk-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.stk .stk-link {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--focus);
+  font-family: var(--font-code);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: underline;
+}
+.stk-good {
+  color: var(--good);
+  font-weight: 600;
+}
+.stk-bad {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.stk-warn-box {
+  padding: 10px 12px;
+  border-left: 3px solid var(--hivis);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--hivis) 12%, var(--surface-2));
+}
+.stk-warn-box ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13.5px;
+}
+
+.stk-flight {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stk-tips {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.stk-source {
+  max-height: 60vh;
+  font-size: 12px;
+}

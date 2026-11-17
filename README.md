@@ -240,6 +240,7 @@ the page (Pyodide in a Web Worker) and no server:
 - **Fly** tab: fly with the keyboard; the on-screen keys also work as touch controls
 - **Scenarios** tab: run a scenario and replay it in 3D with plots
 - **Controllers** tab: edit controllers in Python in the page
+- **Stacks** tab: edit a stack's node graph by double-clicking (see below)
 
 Requires Node 18+.
 
@@ -265,6 +266,26 @@ Controller edits made in the page are kept in that browser only
 (localStorage) and never change the repo's files. To keep one, click Download
 and move the file into `controllers/`; it then works from the command line too
 and shows up in the web app's list for everyone.
+
+### Editing stacks in the browser
+
+The web app's **Stacks** tab shows a stack's node graph (the same layout as
+`--graph`) and edits it in place:
+
+- **Double-click a node** to see its properties (taken from its constructor,
+  so your own nodes get a form too) and change or remove it.
+- **Double-click empty space** to add a sensor; "Show estimators and
+  controllers too" lists every node type, including classes defined in the
+  stack file.
+- Double-click a topic to see who publishes and reads it. A warning bar
+  flags loose ends, such as a remapped topic that nothing reads.
+- **Fly** runs a headless test flight and shows the measured topic rates.
+
+Every change is validated by building the graph, then written back by
+rewriting only the file's `stack()` function, so custom classes, constants,
+and comments are kept. Like controllers, edits are saved in the browser;
+use **Download** to keep the file. The logic lives in `drone_sim/editor/`
+and runs in the page through `web/src/python/bridge.py`.
 
 ## Writing your own controller
 
@@ -353,8 +374,10 @@ drone_sim/
   controller.py   Controller base class (the interface you implement) and Sticks
   control.py      helpers: thrust vector -> attitude -> rotor thrusts
   phri.py         prosocial multi-agent planner (PHRI paper, IBR)
+  editor/         stack editing for the web app's Stacks tab (model + JSON api)
   nodes/          ROS-style framework: Node/Graph (core), msgs, sensors,
-                  estimators, bridge (stacks as controllers, ControllerNode)
+                  estimators, bridge (stacks as controllers, ControllerNode),
+                  layout (graph layout shared by --graph and the web app)
   sim.py          Simulator, run(), scenarios, wind/noise, controller loader
   session.py      LiveSession: keys -> sticks, real-time stepping (no graphics)
   graphics/       everything that draws (the only code that imports matplotlib)
