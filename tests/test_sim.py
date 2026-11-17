@@ -184,7 +184,7 @@ def test_core_and_controllers_do_not_import_graphics():
     import sys
 
     code = (
-        "import sys, drone_sim, drone_sim.control, drone_sim.session\n"
+        "import sys, drone_sim, drone_sim.control, drone_sim.session, drone_sim.nodes\n"
         "from drone_sim import load_controller, run, SimConfig\n"
         "for name in ('pid', 'manual', 'hover_only', 'phri'):\n"
         f"    run(load_controller({str(ROOT / 'controllers')!r} + f'/{{name}}.py'), SimConfig(duration=0.1))\n"
@@ -520,3 +520,171 @@ def test_neighbors_see_each_others_targets():
     sim.step()
     assert b.others[0].target == (1.0, 2.0, 3.0, 0.0)
     assert a.others[0].target == (4.0, 5.0, 6.0, 0.5)  # set before alpha's controller ran
+
+
+# --- Node framework -----------------------------------------------------------------
+
+from dataclasses import dataclass as _dataclass  # noqa: E402
+
+from drone_sim.nodes import (  # noqa: E402
+    ControllerNode, Gps, GpsImuEstimator, Graph, Imu, Mocap, MocapImuEstimator, Node,
+    PerfectState, StackController, to_dot, to_mermaid,
+)
+
+
+@_dataclass(frozen=True)
+class Num:
+    stamp: float
+    value: float
+
+
+class Counter(Node):
+    def setup(self):
+        self.pub = self.create_publisher("count", Num)
+        self.n = 0
+        self.create_timer(self.param("period", 0.1), self.tick)
+
+    def tick(self):
+        self.n += 1
+        self.pub.publish(Num(self.now, self.n))
+
+
+class Doubler(Node):
+    def setup(self):
+        self.seen = []
+        self.out = self.create_publisher("doubled", Num)
+        self.create_subscription("count", Num, self.on_count)
+
+    def on_count(self, msg):
+        self.seen.append((self.now, msg.value))
+        self.out.publish(Num(msg.stamp, 2 * msg.value))
+
+
+def test_pub_sub_timers_and_namespaces():
+    g = Graph([Counter(), Doubler()], namespace="/robot")
+    g.start()
+    g.spin_until(0.35)
+    assert g.node("doubler").seen == [(0.0, 1), (0.1, 2), pytest.approx((0.2, 3)), pytest.approx((0.3, 4))]
+    assert set(g.topics) == {"/robot/count", "/robot/doubled"}
+    assert g.topics["/robot/doubled"].last.value == 8
+    assert g.topics["/robot/count"].rate() == pytest.approx(10.0)
+    assert ("counter", "/robot/count", "pub") in g.edges()
+    assert ("/robot/count", "doubler", "sub") in g.edges()
+    g.start()  # restart resets everything
+    assert g.node("doubler").seen == [] and g.topics["/robot/count"].count == 0
+
+
+def test_remapping_and_global_topics():
+    g = Graph([Counter(remap={"count": "/shared/ticks"}), Doubler(remap={"count": "/shared/ticks"})],
+              namespace="/a")
+    g.start()
+    g.spin_until(0.0)
+    assert "/shared/ticks" in g.topics and "/a/doubled" in g.topics
+    assert g.node("doubler").seen == [(0.0, 1)]
+
+
+def test_topic_types_are_enforced():
+    class Wrong(Node):
+        def setup(self):
+            self.create_subscription("count", int, lambda m: None)
+
+    g = Graph([Counter(), Wrong()])
+    with pytest.raises(TypeError, match="carries Num"):
+        g.start()
+    with pytest.raises(ValueError, match="duplicate node name"):
+        Graph([Counter(), Counter()])
+
+
+def test_timers_at_the_same_time_fire_in_node_order():
+    order = []
+
+    class Tick(Node):
+        def setup(self):
+            self.create_timer(0.5, lambda: order.append(self.name))
+
+    g = Graph([Tick("b"), Tick("a")])
+    g.start()
+    g.spin_until(1.0)
+    assert order == ["b", "a", "b", "a", "b", "a"]
+
+
+def test_perfect_state_stack_matches_the_plain_controller_exactly():
+    cfg = SimConfig(scenario="square", duration=4.0)
+    plain = run(load_controller(PID_PATH), cfg)
+    stack = run(StackController(lambda: [PerfectState(), ControllerNode(PID_PATH)]), cfg)
+    assert np.array_equal(plain.states, stack.states)
+
+
+@pytest.mark.parametrize("sensors, settled", [
+    (lambda: [Imu(), Gps(), GpsImuEstimator()], 0.2),
+    (lambda: [Imu(), Mocap(), MocapImuEstimator()], 0.08),
+])
+def test_pid_flies_on_estimated_state(sensors, settled):
+    c = StackController(lambda: [*sensors(), ControllerNode(PID_PATH)])
+    r = run(c, SimConfig(scenario="step", duration=10.0))
+    err = np.linalg.norm(r.pos - r.targets[:, :3], axis=1)
+    assert err[r.t > 8].max() < settled
+    est = c.graph.topics["/drone0/state_estimate"].last.state
+    assert np.linalg.norm(est.pos - r.pos[-1]) < 0.3
+
+
+def test_sensor_noise_is_reproducible_and_independent_per_drone():
+    def flight():
+        specs = [DroneSpec(load_controller(str(ROOT / "stacks" / "gps_imu_pid.py")), initial_state=at(0, y))
+                 for y in (0.0, 2.0)]
+        sim = Simulator(drones=specs, config=SimConfig(duration=1.0))
+        for _ in range(250):
+            sim.step()
+        return [d.controller.graph.topics[f"/{d.name}/gps"].last.pos - d.state.pos for d in sim.drones]
+
+    first, second = flight(), flight()
+    assert np.array_equal(first[0], second[0])  # reproducible
+    assert not np.allclose(first[0], first[1], atol=1e-6)  # drones' GPS noise differs
+
+
+def test_stack_files_load_with_dash_c_and_fly_with_others():
+    stack = load_controller(str(ROOT / "stacks" / "gps_imu_pid.py"))
+    assert isinstance(stack, StackController) and stack.label == "gps_imu_pid"
+    sim = Simulator(drones=[DroneSpec(stack, initial_state=at(0)),
+                            DroneSpec(load_controller(PID_PATH), initial_state=at(2))])
+    for _ in range(500):
+        sim.step()
+    swarm = stack.graph.topics["/swarm"].last
+    assert [n.name for n in swarm.neighbors] == ["drone1"]
+    assert sim.drones[0].state.z > 0.5
+
+
+def test_live_sticks_reach_a_controller_inside_a_stack():
+    from drone_sim.session import LiveSession
+
+    sim = Simulator(load_controller(str(ROOT / "stacks" / "manual_gps.py")), SimConfig())
+    session = LiveSession(sim)
+    session.key_down("up")
+    tick_for(session, 1.5)
+    assert sim.state.z > 0.5
+
+
+def test_graph_exports():
+    c = StackController(lambda: [Imu(), Gps(), GpsImuEstimator(), ControllerNode(PID_PATH)])
+    c.name = "drone0"
+    c.reset(DroneParams())
+    dot, mmd = to_dot([c.graph]), to_mermaid([c.graph])
+    assert dot.startswith("digraph") and '"/drone0/gps"' in dot and '"/drone0::gps" -> "/drone0/gps"' in dot
+    assert mmd.startswith("flowchart LR") and "GpsFix" in mmd
+    assert "gps_imu_estimator [estimator]" in c.graph.describe()
+
+
+def test_node_graph_drawing(agg, tmp_path):
+    from drone_sim.graphics.node_graph import draw_graphs, save_graphs
+
+    graphs = []
+    for name in ("drone0", "drone1"):
+        c = load_controller(str(ROOT / "stacks" / "gps_imu_pid.py"))
+        c.name = name
+        c.reset(DroneParams())
+        graphs.append(c.graph)
+    fig = draw_graphs(graphs)
+    titles = [t.get_text() for t in fig.axes[0].texts if "same stack" in t.get_text()]
+    assert titles == ["drone0, drone1  (same stack)"]
+    save_graphs(graphs, str(tmp_path / "g.png"))
+    assert (tmp_path / "g.png").stat().st_size > 1000
