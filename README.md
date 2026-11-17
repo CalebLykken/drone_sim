@@ -253,11 +253,29 @@ attributes on `Prosocial` (`params`, `other_params`, `ibr_iterations`,
 Differences from the Julia code, since these are drones: the planner uses a
 3D double integrator instead of a unicycle, so drones can also pass over or
 under each other; a soft altitude floor; and a 2 cm "keep right" nudge so
-perfectly symmetric head-on encounters still resolve. Drones running the
-planner share identical game solves (`GameCache`), so cost grows linearly
-with the number of drones (about 0.45 s of compute per drone per simulated
-second on an M1 Mac). Requires `cvxpy` (Clarabel by default; set
-`PHRIParams(solver="ECOS")` for the paper's solver).
+perfectly symmetric head-on encounters still resolve. Requires `cvxpy`
+(Clarabel by default; set `PHRIParams(solver="ECOS")` for the paper's solver).
+
+Speed:
+
+- **Parallel solves.** Like the Julia code's `Threads.@threads`, each IBR
+  round solves every agent's problem at once, here in a pool of worker
+  processes (Python threads wouldn't help, because Clarabel holds the GIL
+  while it solves). Each agent is pinned to a worker, so its problem is
+  compiled there once. Results are identical to solving one at a time.
+  The pool uses one process per performance core; set `workers` on
+  `Prosocial` or `DRONE_SIM_PHRI_WORKERS` to change that (1 turns it off).
+  In the browser (Pyodide has no processes) solves run one at a time.
+- **Shared games.** Drones running the planner solve the identical game
+  from the same inputs, so one solve is shared (`GameCache`).
+
+Circle swap, 10 s, on a 4-performance-core M1:
+
+| Drones | 1 worker | 4 workers |
+|---|---|---|
+| 2 | 8.7 s | 6.6 s |
+| 4 | 17.5 s | 8.7 s |
+| 6 | 26.7 s | 13.8 s |
 
 ## Flying it yourself
 

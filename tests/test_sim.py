@@ -688,3 +688,54 @@ def test_node_graph_drawing(agg, tmp_path):
     assert titles == ["drone0, drone1  (same stack)"]
     save_graphs(graphs, str(tmp_path / "g.png"))
     assert (tmp_path / "g.png").stat().st_size > 1000
+
+
+# --- PHRI in parallel -----------------------------------------------------------------
+
+def circle_game(n, params):
+    from drone_sim.phri import GameAgent
+
+    agents = []
+    for i in range(n):
+        a = 2 * np.pi * i / n
+        x0 = np.r_[4 * np.cos(a), 4 * np.sin(a), 1.5, 0, 0, 0]
+        agents.append(GameAgent(f"d{i}", x0, np.r_[-x0[:3], 0, 0, 0], params))
+    return agents
+
+
+def test_phri_worker_pool_gives_identical_plans():
+    pytest.importorskip("cvxpy")
+    from drone_sim.phri import GameCache, PHRIParams, PHRIPlanner
+
+    p = PHRIParams()
+    plans = {}
+    for workers in (1, 3):
+        GameCache.clear()
+        planner = PHRIPlanner(p, workers=workers)
+        for _ in range(2):  # a replan warm-starts from the first plan
+            game = circle_game(4, p)
+            planner.plan(game)
+        assert planner.last_stats.failures == 0
+        plans[workers] = {a.name: a.xs for a in game}
+    for name in plans[1]:
+        assert np.array_equal(plans[1][name], plans[3][name])
+
+
+def test_phri_worker_errors_surface_with_the_traceback():
+    pytest.importorskip("cvxpy")
+    from drone_sim.phri import PHRIParams, pool
+
+    p = PHRIParams()
+    bad = ("ideal", "x", p, np.zeros(6), np.zeros(6), np.zeros((3, 6)), np.zeros((3, 3)))  # wrong shapes
+    with pytest.raises(RuntimeError, match="PHRI worker .* failed"):
+        pool(2).run([bad, bad])
+
+
+def test_phri_default_workers(monkeypatch):
+    from drone_sim import phri
+
+    monkeypatch.setenv("DRONE_SIM_PHRI_WORKERS", "3")
+    assert phri.default_workers() == 3
+    monkeypatch.delenv("DRONE_SIM_PHRI_WORKERS")
+    monkeypatch.setattr(phri.sys, "platform", "emscripten")  # the browser: no processes
+    assert phri.default_workers() == 1

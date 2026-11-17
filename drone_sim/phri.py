@@ -46,6 +46,10 @@ Differences from the Julia code, because these are drones, not ground robots:
 - Solves are memoized: when several drones run this planner they all solve
   the same game from the same inputs, so the first one to solve it shares
   the result (see `GameCache`). This changes speed, not results.
+- Like the Julia code's `Threads.@threads`, each IBR round solves every
+  agent's problem in parallel, here in a pool of worker processes (Python
+  threads wouldn't help: Clarabel holds the GIL while it solves). See
+  `WorkerPool`. This also changes speed, not results.
 
 This module needs cvxpy (with ECOS, the paper's solver; Clarabel also works).
 Nothing else in drone_sim imports it.
@@ -53,7 +57,14 @@ Nothing else in drone_sim imports it.
 
 from __future__ import annotations
 
+import atexit
+import multiprocessing
+import os
+import subprocess
+import sys
+import threading
 import time
+import traceback
 import warnings
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -244,6 +255,164 @@ class AgentProblem:
         return x.value.copy(), u.value.copy(), slack, True
 
 
+# --- Solving: in this process or in a pool of worker processes ---------------------
+#
+# A task is one agent's solve: ("ideal", name, params, x0, goal, xbar, ubar) or
+# ("incon", name, params, x0, goal, xbar, ubar, others, budget, scp_iterations).
+# run_task() is the same code in both places; only where it runs differs.
+
+def run_task(problems: dict, task: tuple):
+    """Run one task with the agent's (cached) AgentProblem.
+
+    ideal -> (xs, us, ok, solves); incon -> (xs, us, slack, ok_any, solves, failures)
+    """
+    kind, name, params, x0, goal, xbar, ubar, *rest = task
+    key = (name, params)
+    problem = problems.get(key)
+    if problem is None:
+        problem = problems[key] = AgentProblem(params)
+    if kind == "ideal":
+        xs, us, ok = problem.solve_ideal(x0, goal, xbar, ubar)
+        return xs, us, ok, params.ideal_iterations
+    others, budget, iterations = rest
+    xs, us, slack, any_ok, failures = xbar, ubar, None, False, 0
+    for _ in range(iterations):
+        nxs, nus, nslack, ok = problem.solve_incon(x0, goal, xs, us, others, budget)
+        if ok:
+            xs, us, slack, any_ok = nxs, nus, nslack, True
+        else:
+            failures += 1
+    return xs, us, slack, any_ok, iterations, failures
+
+
+def _worker_main(conn) -> None:
+    """A worker process: keeps compiled problems for the agents assigned to
+    it and runs batches of tasks until told to stop."""
+    problems: dict = {}
+    while True:
+        try:
+            tasks = conn.recv()
+        except EOFError:
+            return
+        if tasks is None:
+            return
+        try:
+            conn.send(("ok", [run_task(problems, t) for t in tasks]))
+        except Exception:
+            conn.send(("error", traceback.format_exc()))
+
+
+def default_workers() -> int:
+    """How many worker processes to use: DRONE_SIM_PHRI_WORKERS if set, 1 in
+    the browser (Pyodide has no processes), else the number of performance
+    cores (all cores where there's no such distinction), at most 8."""
+    env = os.environ.get("DRONE_SIM_PHRI_WORKERS")
+    if env:
+        return max(1, int(env))
+    if sys.platform == "emscripten":
+        return 1
+    cores = None
+    if sys.platform == "darwin":  # Apple silicon: don't count efficiency cores
+        try:
+            out = subprocess.run(["sysctl", "-n", "hw.perflevel0.physicalcpu"],
+                                 capture_output=True, text=True, timeout=2)
+            cores = int(out.stdout.strip()) if out.returncode == 0 else None
+        except (OSError, ValueError, subprocess.SubprocessError):
+            cores = None
+    return max(1, min(8, cores or os.cpu_count() or 1))
+
+
+class WorkerPool:
+    """Worker processes that solve agents' problems in parallel.
+
+    Each agent (name, params) is pinned to one worker, so its cvxpy problems
+    are compiled there once and reused; a round sends each worker one batch
+    of small arrays. Started on first use and shared by every PHRIPlanner in
+    the process (see `pool()`).
+    """
+
+    def __init__(self, size: int):
+        ctx = multiprocessing.get_context("spawn")  # fork is unsafe with BLAS/Accelerate
+        self.size = size
+        self.conns = []
+        self.procs = []
+        for i in range(size):
+            parent, child = ctx.Pipe()
+            proc = ctx.Process(target=_worker_main, args=(child,), name=f"phri-worker-{i}", daemon=True)
+            proc.start()
+            child.close()
+            self.conns.append(parent)
+            self.procs.append(proc)
+        self.assigned: dict[tuple, int] = {}
+        self.load = [0] * size
+        self.lock = threading.Lock()
+
+    def _worker(self, key: tuple) -> int:
+        if key not in self.assigned:
+            i = min(range(self.size), key=lambda j: self.load[j])
+            self.assigned[key] = i
+            self.load[i] += 1
+        return self.assigned[key]
+
+    def run(self, tasks: list[tuple]) -> list:
+        """Run tasks in parallel (one batch per worker); results in task order."""
+        with self.lock:
+            batches: dict[int, list[int]] = {}
+            for index, task in enumerate(tasks):
+                batches.setdefault(self._worker((task[1], task[2])), []).append(index)
+            for w, indices in batches.items():
+                self.conns[w].send([tasks[i] for i in indices])
+            results: list = [None] * len(tasks)
+            for w, indices in batches.items():
+                try:
+                    status, payload = self.conns[w].recv()
+                except EOFError:
+                    raise RuntimeError(f"PHRI worker {w} stopped unexpectedly") from None
+                if status != "ok":
+                    raise RuntimeError(f"PHRI worker {w} failed:\n{payload}")
+                for i, result in zip(indices, payload):
+                    results[i] = result
+            return results
+
+    def close(self) -> None:
+        for conn in self.conns:
+            try:
+                conn.send(None)
+                conn.close()
+            except OSError:
+                pass
+        for proc in self.procs:
+            proc.join(timeout=2)
+            if proc.is_alive():
+                proc.terminate()
+
+
+_pool: WorkerPool | None = None
+_pool_lock = threading.Lock()
+
+
+def pool(size: int) -> WorkerPool:
+    """The shared worker pool, started (or grown) on first use."""
+    global _pool
+    with _pool_lock:
+        if _pool is None or _pool.size < size:
+            if _pool is not None:
+                _pool.close()
+            _pool = WorkerPool(size)
+        return _pool
+
+
+def shutdown_pool() -> None:
+    global _pool
+    with _pool_lock:
+        if _pool is not None:
+            _pool.close()
+            _pool = None
+
+
+atexit.register(shutdown_pool)
+
+
 @dataclass
 class GameAgent:
     """One participant in the planning game, as the ego sees it."""
@@ -308,7 +477,7 @@ class PHRIPlanner:
     """
 
     def __init__(self, params: PHRIParams | None = None, other_params: PHRIParams | None = None,
-                 ibr_iterations: int = 3, order: str = "simultaneous"):
+                 ibr_iterations: int = 3, order: str = "simultaneous", workers: int | None = None):
         if order not in ("simultaneous", "sequential"):
             raise ValueError("order must be 'simultaneous' or 'sequential'")
         self.params = params or PHRIParams()
@@ -317,16 +486,18 @@ class PHRIPlanner:
             raise ValueError("all agents must share dt and horizon")
         self.ibr_iterations = ibr_iterations
         self.order = order
+        # Worker processes for parallel solves; 1 solves everything in this process.
+        self.workers = default_workers() if workers is None else max(1, int(workers))
         self._problems: dict[tuple[str, PHRIParams], AgentProblem] = {}
         self._warm: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         self.last_stats = GameStats()
         self.last_game: list[GameAgent] = []
 
-    def _problem(self, agent: GameAgent) -> AgentProblem:
-        key = (agent.name, agent.params)
-        if key not in self._problems:
-            self._problems[key] = AgentProblem(agent.params)
-        return self._problems[key]
+    def _run(self, tasks: list[tuple]) -> list:
+        """Solve tasks, in parallel when there's more than one and workers > 1."""
+        if self.workers > 1 and len(tasks) > 1:
+            return pool(self.workers).run(tasks)
+        return [run_task(self._problems, t) for t in tasks]
 
     def _initial_guess(self, agent: GameAgent):
         warm = self._warm.get(agent.name)
@@ -379,40 +550,42 @@ class PHRIPlanner:
         stats = GameStats()
 
         # 1. Ideal plans set each agent's budget and the starting point for IBR.
-        for a in planners:
-            xbar, ubar = guesses[a.name]
-            a.xs, a.us, ok = self._problem(a).solve_ideal(a.x0, a.goal, xbar, ubar)
-            stats.solves += a.params.ideal_iterations
+        ideal = self._run([("ideal", a.name, a.params, a.x0, a.goal, *guesses[a.name]) for a in planners])
+        for a, (xs, us, ok, solves) in zip(planners, ideal):
+            a.xs, a.us = xs, us
+            stats.solves += solves
             stats.failures += not ok
             a.ideal_xs = a.xs.copy()
             a.budget = (1 + a.params.inconvenience_ratio) * convenience(a.xs, a.goal, a.params.inconvenience_weights)
             stats.budgets[a.name] = a.budget
 
-        def others_positions(me: GameAgent, plans: dict[str, np.ndarray]) -> list[np.ndarray]:
-            return [plans[a.name] for a in agents if a is not me]
+        def respond_task(a: GameAgent, plans: dict[str, np.ndarray], scp_iterations: int = 1) -> tuple:
+            others = [plans[b.name] for b in agents if b is not a]
+            return ("incon", a.name, a.params, a.x0, a.goal, a.xs, a.us, others, a.budget, scp_iterations)
 
-        def respond(a: GameAgent, plans: dict[str, np.ndarray], scp_iterations: int = 1) -> None:
-            for _ in range(scp_iterations):
-                xs, us, slack, ok = self._problem(a).solve_incon(
-                    a.x0, a.goal, a.xs, a.us, others_positions(a, plans), a.budget)
-                stats.solves += 1
-                stats.failures += not ok
+        def apply(group: list[GameAgent], results: list) -> None:
+            for a, (xs, us, slack, ok, solves, failures) in zip(group, results):
+                stats.solves += solves
+                stats.failures += failures
                 if ok:
                     a.xs, a.us = xs, us
                     stats.max_slack[a.name] = slack
 
-        # 2. Best responses. One iteration = non-interactive baseline: plan
-        #    against the others' ideal plans with a few SCP iterations.
+        # 2. Best responses. Simultaneous rounds solve every agent at once
+        #    (in parallel); sequential rounds go one agent at a time. One
+        #    iteration = non-interactive baseline: plan against the others'
+        #    ideal plans with a few SCP iterations.
         if self.ibr_iterations <= 1:
             plans = {**fixed, **{a.name: a.ideal_xs[:, POS] for a in planners}}
-            for a in planners:
-                respond(a, plans, scp_iterations=5)
+            apply(planners, self._run([respond_task(a, plans, scp_iterations=5) for a in planners]))
         else:
             for _ in range(self.ibr_iterations):
                 plans = {**fixed, **{a.name: a.xs[:, POS] for a in planners}}
-                for a in planners:
-                    respond(a, plans)
-                    if self.order == "sequential":
+                if self.order == "simultaneous":
+                    apply(planners, self._run([respond_task(a, plans) for a in planners]))
+                else:
+                    for a in planners:
+                        apply([a], self._run([respond_task(a, plans)]))
                         plans[a.name] = a.xs[:, POS]
 
         stats.seconds = time.perf_counter() - start
