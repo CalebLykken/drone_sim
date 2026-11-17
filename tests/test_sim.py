@@ -364,3 +364,58 @@ def test_live_session_pilots_the_first_drone():
     assert sim.drones[0].controller.sticks.throttle > 0.9
     assert sim.drones[1].controller.sticks == Sticks()
     assert sim.drones[0].state.z > 0.5 and sim.drones[1].state.z > 0.5
+
+
+# --- Graphics smoke tests (headless) ---------------------------------------------
+
+@pytest.fixture
+def agg():
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    yield plt
+    plt.close("all")
+
+
+def test_playback_draws_every_drone(agg):
+    from drone_sim.graphics.playback import animate
+
+    (a, b), collisions = head_on()
+    anim = animate([a, b], collisions=collisions)
+    ax3 = agg.gcf().axes[0]
+    agg.gcf().canvas.draw()  # the first draw starts the animation at frame 0
+    for k in (0, len(a.t) // 2, len(a.t) - 1):
+        anim._func(k)
+    labels = {t.get_text() for t in ax3.texts}
+    assert {"A (crashed)", "B (crashed)"} <= labels
+    stars = [l for l in ax3.lines if l.get_marker() == "*"]
+    assert any(len(l.get_data_3d()[0]) for l in stars)  # collision marked
+    assert len(agg.gcf().axes[1].lines) >= 2  # one line per drone in the plots
+
+
+def test_playback_single_result_still_works(agg):
+    from drone_sim.graphics.playback import animate
+
+    anim = animate(run(load_controller(PID_PATH), SimConfig(duration=1.0)))
+    anim._func(10)
+    agg.gcf().canvas.draw()
+    assert agg.gcf().axes[1].get_ylabel() == "position [m]"
+
+
+@pytest.mark.filterwarnings("ignore:FigureCanvasAgg is non-interactive")
+def test_live_window_draws_every_drone(agg):
+    from drone_sim.graphics.live import fly
+    from drone_sim.session import LiveSession
+
+    sim = Simulator(drones=[
+        DroneSpec(load_controller(str(ROOT / "controllers" / "manual.py")), initial_state=at(0), name="you"),
+        DroneSpec(load_controller(PID_PATH), initial_state=at(1), name="near"),
+        DroneSpec(load_controller(PID_PATH), initial_state=at(30), name="far"),
+    ])
+    anim = fly(LiveSession(sim))
+    anim._func(0)
+    agg.gcf().canvas.draw()
+    labels = {t.get_text(): t.get_visible() for t in agg.gcf().axes[0].texts if t.get_text() in ("you", "near", "far")}
+    assert labels == {"you": True, "near": True, "far": False}  # far is outside the chase view

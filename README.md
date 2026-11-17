@@ -37,7 +37,9 @@ python -m drone_sim --live -n 3                       # you fly drone0; the othe
 
 Drones start in a line along y and each flies the scenario shifted by its
 starting offset. Metrics are printed per drone, followed by any collisions.
-(The graphics currently draw only the first drone.)
+Every drone is drawn in its own color with a label; crashed drones fade out
+and collisions are marked with a red star. In live mode the camera follows
+the drone you fly.
 
 All drones share the clock and the wind. Two drones collide when their
 centers come closer than the sum of their `DroneParams.radius` (0.25 m by
@@ -196,4 +198,5 @@ tests/            python -m pytest tests/
 Graphics only read from the core (`SimResult`, `Simulator`, `LiveSession`);
 nothing outside `graphics/` imports it, and a test enforces that controllers
 and the simulator load without matplotlib. A new front end needs an
-`animate(result)` and a `fly(session)`; see `drone_sim/graphics/__init__.py`.
+`animate(results, collisions=...)` and a `fly(session)`; see
+`drone_sim/graphics/__init__.py`.
