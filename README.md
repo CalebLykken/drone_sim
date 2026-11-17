@@ -3,6 +3,21 @@
 A small 3D quadrotor simulator for trying out flight controllers. You write a
 controller as a Python class, point the sim at the file, and watch it fly.
 
+<p align="center">
+  <img src="docs/images/flight.gif" width="100%"
+       alt="A quadrotor flying a square in gusty wind, next to plots of its position, error, attitude and rotor thrusts">
+  <br>
+  <sub><code>python -m drone_sim -s square --wind 1 0.5 --gust 0.5</code>: the example PID controller flying a square in gusty wind</sub>
+</p>
+
+**Why it exists:** testing a control idea on a real drone is slow and
+crashes are expensive, and a full robotics simulator takes a while to set up.
+This sits in between. A controller is one Python file, every run is
+reproducible, and you can see exactly what happened (where the drone went,
+how it tilted, what each motor did). You can compare controllers under the
+same wind and noise, then make it harder: add noisy sensors and a state
+estimator, put several drones in the air, or fly it yourself.
+
 - Full 3D rigid-body dynamics (quaternion attitude) for an X-configuration quad
 - Motor lag and thrust saturation
 - Optional steady wind, gusts, and sensor noise
@@ -50,6 +65,19 @@ for each drone (RMS and final position error, max tilt, whether it flipped
 or crashed). All the flags are listed under
 [Command-line options](#command-line-options).
 
+**Reading the playback window** (the animation above):
+
+| Panel | What it shows |
+|---|---|
+| 3D view | The drone, with its front rotors in red and its thrust axis in green. Also its trail, its shadow on the ground, the current target (red ✕), and the whole target path (dotted red). |
+| Top-left text | Simulation time and the wind force acting right now (steady wind plus gusts). |
+| position | x, y, z (solid) against the target (dashed). The gap between them is how far behind the controller is. |
+| error | Straight-line distance to the target. The jumps are the target moving to the next corner. |
+| attitude | Roll, pitch and yaw, plus the yaw target (dotted). The drone tilts to accelerate, so pitch and roll spikes show it working hard. |
+| thrust | Each rotor's thrust (FL, FR, BR, BL). The dotted red line is `max_thrust`; a rotor sitting on it is saturated. |
+
+The vertical line in the plots follows the animation.
+
 | Scenario | Target |
 |---|---|
 | `hover` | hold (0, 0, 1) |
@@ -69,6 +97,13 @@ python -m drone_sim -n 2 --spacing 0.4 --ghost        # let drones pass through 
 python -m drone_sim --live -n 3                       # you fly drone0; the others run pid.py
 python -m drone_sim -n 4 --layout circle --radius 3   # 4 drones swap sides of a circle
 ```
+
+<p align="center">
+  <img src="docs/images/swarm.png" width="100%"
+       alt="Three drones flying the square scenario side by side, with altitude, error, tilt and total thrust plotted per drone">
+  <br>
+  <sub><code>python -m drone_sim -n 3 -s square</code>: three drones fly the same square, 1 m apart. With several drones the plots compare them: altitude, error, tilt and total thrust, one color per drone.</sub>
+</p>
 
 With the default `--layout line`, drones start in a line along y and each
 flies the scenario shifted by its starting offset. With `--layout circle`,
@@ -115,6 +150,21 @@ control period at a time; `sim.drones`, `sim.drone("leader")`,
 
 Beyond a single controller class, a drone can run a **stack**: ROS-style
 nodes that talk over typed topics, e.g. sensors → estimator → controller.
+
+**Why:** a plain controller is handed the drone's true state, but a real
+drone never knows its state exactly. It estimates it from sensors that are
+noisy, slow, or both (GPS updates about 10 times a second; an IMU drifts). A
+controller that flies perfectly on true state can wobble or drift on
+estimated state. Stacks let you find that out, and let you swap any piece
+(another estimator, an extra filter, a different sensor) without touching
+the rest, the way you would on a ROS robot.
+
+<p align="center">
+  <img src="docs/images/node-graph.png" width="100%"
+       alt="Node graph: sim publishes ground_truth to imu and gps sensors, which feed gps_imu_estimator, which publishes state_estimate to the controller, which publishes motor_command back to sim">
+  <br>
+  <sub><code>python -m drone_sim -c stacks/gps_imu_pid.py --graph</code>. Rounded boxes are nodes, colored by kind: simulator (gray), sensors (blue), estimator (green), controller (orange). Dashed boxes are topics with their message type. The red line is the motor command going back to the simulator, which closes the loop.</sub>
+</p>
 
 ```bash
 python -m drone_sim -c stacks/gps_imu_pid.py -s square        # IMU + GPS -> filter -> PID
@@ -221,11 +271,33 @@ about 3× longer than with perfect state.
 extended to any number of drones with iterated best response, as on the
 `multi_ibr_dev` branch.
 
+**Why:** an ordinary controller like the PID flies straight at its target and
+knows nothing about anyone else. When paths cross, that ends in a collision.
+PHRI drones plan around each other. Each one gives way only as much as its
+fair share, and starts doing so early, so the others can see where it's going
+and react in time.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/circle-pid.gif" width="100%"
+         alt="Four PID drones fly straight at the opposite side of a circle and all collide in the middle"></td>
+    <td width="50%"><img src="docs/images/circle-phri.gif" width="100%"
+         alt="Four PHRI drones fly to the opposite side of a circle, two passing over and two under, and all arrive"></td>
+  </tr>
+  <tr>
+    <td><sub><b>PID</b>: every drone flies the straight line to its goal. All four collide in the middle at 3.3 s and fall.</sub></td>
+    <td><sub><b>PHRI</b>: same start and goals. The drones spread out, two going over the middle and two under, and all four arrive.</sub></td>
+  </tr>
+</table>
+
 ```bash
 python -m drone_sim -c controllers/phri.py --layout circle -n 4   # 4 drones cross a circle
 python -m drone_sim -c controllers/pid.py  --layout circle -n 4   # same with PID: they crash
 python -m drone_sim --live -n 2 -c controllers/manual.py -c controllers/phri.py --layout circle
 ```
+
+The last one puts you in the circle with a PHRI drone: fly straight at it and
+watch it get out of your way.
 
 Every 0.1 s each PHRI drone solves a game with every drone around it:
 
@@ -266,6 +338,13 @@ python -m drone_sim --live                 # manual controller, try to reach the
 python -m drone_sim --live -s square --gust 0.5
 ```
 
+<p align="center">
+  <img src="docs/images/live.png" width="70%"
+       alt="Live flight window: a chase view of the drone with its trail, the red target X, and a readout of time, altitude, speed, attitude, distance to target and stick positions">
+  <br>
+  <sub>The live window. The camera follows your drone, and the readout shows altitude, speed, attitude, distance to the red ✕, and what the sticks are doing.</sub>
+</p>
+
 | Key | Action |
 |---|---|
 | `↑` / `↓` | climb / descend (start here to take off) |
@@ -288,11 +367,35 @@ controller live, e.g. `--live -c controllers/pid.py -s figure8`.
 ## Web app
 
 `web/` runs the same simulator in a browser tab, with the Python running in
-the page (Pyodide in a Web Worker) and no server:
+the page (Pyodide in a Web Worker) and no server.
 
-- **Fly** tab: fly with the keyboard; the on-screen keys also work as touch controls
-- **Scenarios** tab: run a scenario and replay it in 3D with plots
-- **Controllers** tab: edit controllers in Python in the page
+**Why:** with the web app, someone can try the simulator without
+installing Python, and you can show it on any device. It runs the repo's
+actual `drone_sim/` and `controllers/` code, not a JavaScript copy, so it
+always behaves like the command line.
+
+**Fly**: fly with the keyboard. The on-screen keys also work as touch
+controls. Pick the controller, target path, number of drones, and wind on
+the right.
+
+<img src="docs/images/web-fly.png" width="100%"
+     alt="Fly tab: a drone in a 3D scene with its trail, a readout of altitude, speed and heading, controller settings, and on-screen keys">
+
+**Scenarios**: run a scenario with any controller, drone count, wind, gusts
+and sensor noise, then replay it in 3D with a timeline. Each drone gets a
+row of metrics, and the plots on the right show the selected drone's
+position, error, attitude and rotor thrust.
+
+<img src="docs/images/web-scenarios.png" width="100%"
+     alt="Scenarios tab: settings form, a 3D replay of three drones flying a square, a metrics table, and time plots">
+
+**Controllers**: edit controller code in the page. **Check** loads the file
+and flies it for 2 s, so mistakes show up before you fly. **Fly it** and
+**Run a scenario** try it right away, and `print()` output appears in the
+Python console.
+
+<img src="docs/images/web-controllers.png" width="100%"
+     alt="Controllers tab: a list of controller files, a Python editor showing pid.py, and a check result">
 
 Requires Node 18+.
 
@@ -464,6 +567,7 @@ web/              browser app (Vite + React + TypeScript, Python via Pyodide)
   src/sim/        Web Worker that loads Pyodide and the repo's Python, and its client
   src/three/      3D scene
   src/views/      the Fly, Scenarios and Controllers tabs
+docs/images/      screenshots and animations used in this README
 ```
 
 Graphics only read from the core (`SimResult`, `Simulator`, `LiveSession`);
