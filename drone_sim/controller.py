@@ -14,7 +14,23 @@ Write a subclass in any .py file and pass its path to the simulator:
             return [self.hover] * 4   # FL, FR, BR, BL thrust in newtons
 """
 
+from dataclasses import dataclass
+
 from .dynamics import DroneParams, State
+
+
+@dataclass(frozen=True)
+class Sticks:
+    """Pilot inputs, each in [-1, 1]. All zero unless flying with --live.
+
+    throttle: +1 up       roll: +1 right
+    pitch:    +1 forward  yaw:  +1 turn right (clockwise from above)
+    """
+
+    throttle: float = 0.0
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
 
 
 class Controller:
@@ -27,7 +43,12 @@ class Controller:
 
     Tip: compute a total thrust and a body torque, then let
     `params.allocate(total_thrust, torque)` split it across the four rotors.
+
+    `self.sticks` holds the latest pilot inputs (see Sticks). In live mode the
+    simulator updates it from the keyboard before every `update` call.
     """
+
+    sticks: Sticks = Sticks()
 
     def reset(self, params: DroneParams) -> None:
         """Called once before the run. Store whatever physical params you need."""
