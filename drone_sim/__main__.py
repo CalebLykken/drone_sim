@@ -16,14 +16,17 @@ def main(argv=None):
     ap.add_argument("-s", "--scenario", default="step", choices=sorted(SCENARIOS))
     ap.add_argument("-d", "--duration", type=float, default=12.0, help="seconds")
     ap.add_argument("--control-hz", type=float, default=250.0)
-    ap.add_argument("--wind", type=float, default=0.0, help="steady sideways force [N]")
-    ap.add_argument("--gust", type=float, default=0.0, help="gust strength (std dev) [N]")
+    ap.add_argument("--wind", type=float, nargs="+", default=[0.0], metavar="N",
+                    help="steady wind force [N]: X, or X Y, or X Y Z")
+    ap.add_argument("--gust", type=float, default=0.0, help="gust strength (std dev per axis) [N]")
     ap.add_argument("--noise", type=float, default=0.0, help="sensor noise std dev")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--speed", type=float, default=1.0, help="playback speed multiplier")
     ap.add_argument("--save", help="save the animation to a .gif or .mp4 instead of showing it")
     ap.add_argument("--no-gui", action="store_true", help="just print metrics")
     args = ap.parse_args(argv)
+    if len(args.wind) > 3:
+        ap.error("--wind takes at most 3 values (X Y Z)")
 
     sys.path.insert(0, str(Path.cwd()))  # let controllers import helpers next to them
     controller = load_controller(args.controller)
@@ -31,7 +34,7 @@ def main(argv=None):
         duration=args.duration,
         control_hz=args.control_hz,
         scenario=args.scenario,
-        wind_mean=args.wind,
+        wind_mean=tuple(args.wind + [0.0] * (3 - len(args.wind))),
         wind_gust=args.gust,
         sensor_noise=args.noise,
         seed=args.seed,

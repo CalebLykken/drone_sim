@@ -3,55 +3,101 @@
 import math
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from drone_sim import Controller, DroneParams, SimConfig, State, load_controller, run
+from drone_sim.dynamics import euler_to_quat, quat_to_rot, rot_to_euler
 
 ROOT = Path(__file__).resolve().parent.parent
+FL, FR, BR, BL = range(4)
 
 
 class Constant(Controller):
-    def __init__(self, left, right):
-        self.cmd = (left, right)
+    def __init__(self, *cmd):
+        self.cmd = cmd
 
     def update(self, t, state, target, dt):
         return self.cmd
 
 
-def test_hover_thrust_holds_altitude():
-    p = DroneParams()
-    cfg = SimConfig(duration=2.0, initial_state=State(z=1.0), scenario="hover")
+def hover_plus(delta):
+    """Hover thrust on every rotor, plus a per-rotor delta."""
+    return Constant(*(DroneParams().hover_thrust + np.asarray(delta)))
+
+
+def fly(controller, duration, z0=5.0):
+    return run(controller, SimConfig(duration=duration, initial_state=State(pos=np.array([0, 0, z0]))))
+
+
+def test_hover_thrust_holds_position():
     # Spin motors up instantly so the drone doesn't sag while they spool.
-    res = run(Constant(p.hover_thrust, p.hover_thrust), cfg, DroneParams(motor_tau=1e-6))
-    assert res.states[-1, 1] == pytest.approx(1.0, abs=1e-3)
+    res = run(hover_plus([0, 0, 0, 0]),
+              SimConfig(duration=2.0, initial_state=State(pos=np.array([0, 0, 1.0]))),
+              DroneParams(motor_tau=1e-6))
+    assert res.pos[-1] == pytest.approx([0, 0, 1.0], abs=1e-3)
+    assert np.abs(res.euler).max() < 1e-9
 
 
 def test_zero_thrust_stays_on_ground():
-    res = run(Constant(0.0, 0.0), SimConfig(duration=1.0))
-    assert res.states[:, 1].max() == 0.0
+    res = run(Constant(0, 0, 0, 0), SimConfig(duration=1.0))
+    assert res.pos[:, 2].max() == 0.0
 
 
-def test_more_right_thrust_rotates_ccw_and_moves_left():
+def test_front_thrust_pitches_nose_up_and_flies_backward():
+    res = fly(hover_plus([0.05, 0.05, -0.05, -0.05]), 0.3)
+    assert res.euler[-1, 1] < 0  # pitch < 0 is nose up
+    assert res.pos[-1, 0] < 0
+
+
+def test_left_thrust_rolls_right_side_down_and_flies_right():
+    res = fly(hover_plus([0.05, -0.05, -0.05, 0.05]), 0.3)
+    assert res.euler[-1, 0] > 0  # roll > 0 lifts the left (+y) side
+    assert res.pos[-1, 1] < 0
+
+
+def test_diagonal_pair_yaws_ccw():
+    res = fly(hover_plus([0.2, -0.2, 0.2, -0.2]), 0.5)
+    assert res.euler[-1, 2] > 0
+    assert np.abs(res.euler[-1, :2]).max() < 1e-6
+    assert np.abs(res.pos[-1, :2]).max() < 1e-6
+
+
+def test_allocate_inverts_mixer():
     p = DroneParams()
-    cfg = SimConfig(duration=0.3, initial_state=State(z=5.0))
-    res = run(Constant(p.hover_thrust - 0.1, p.hover_thrust + 0.1), cfg)
-    assert res.states[-1, 2] > 0  # theta
-    assert res.states[-1, 0] < 0  # x
+    thrusts = p.allocate(10.0, [0.01, -0.02, 0.003])
+    assert p.mixer @ thrusts == pytest.approx([10.0, 0.01, -0.02, 0.003])
+
+
+def test_euler_round_trip():
+    angles = np.array([0.3, -0.4, 2.0])
+    assert rot_to_euler(quat_to_rot(euler_to_quat(*angles))) == pytest.approx(angles)
 
 
 def test_thrust_saturates():
-    res = run(Constant(100.0, 100.0), SimConfig(duration=0.5))
+    res = run(Constant(100, 100, 100, 100), SimConfig(duration=0.5))
     assert res.thrusts.max() <= DroneParams().max_thrust + 1e-9
 
 
 # Durations end each run ~3 s after the last target change, so the drone has settled.
-@pytest.mark.parametrize("scenario, duration", [("hover", 5.0), ("step", 6.0), ("square", 8.9)])
+@pytest.mark.parametrize(
+    "scenario, duration",
+    [("hover", 5.0), ("step", 6.0), ("square", 8.9), ("spin", 6.0)],
+)
 def test_example_pid_tracks(scenario, duration):
     cfg = SimConfig(scenario=scenario, duration=duration)
     res = run(load_controller(str(ROOT / "controllers" / "pid.py")), cfg)
     m = res.metrics()
     assert not m["flipped"]
     assert m["final_pos_error_m"] < 0.2
+    yaw_err = (res.euler[-1, 2] - res.targets[-1, 3] + math.pi) % (2 * math.pi) - math.pi
+    assert abs(yaw_err) < math.radians(5)
+
+
+def test_hover_only_template_flies():
+    res = run(load_controller(str(ROOT / "controllers" / "hover_only.py")),
+              SimConfig(scenario="hover", duration=5.0))
+    assert res.metrics()["final_pos_error_m"] < 0.05
 
 
 def test_load_by_class_name():
@@ -71,6 +117,7 @@ def test_load_rejects_ambiguous_file(tmp_path):
     assert type(load_controller(f"{f}:B")).__name__ == "B"
 
 
-def test_bad_controller_output_is_reported():
-    with pytest.raises(ValueError, match="expected two finite thrusts"):
-        run(Constant(math.nan, 1.0), SimConfig(duration=0.1))
+@pytest.mark.parametrize("cmd", [(math.nan, 1, 1, 1), (1, 1)])
+def test_bad_controller_output_is_reported(cmd):
+    with pytest.raises(ValueError, match="expected four finite thrusts"):
+        run(Constant(*cmd), SimConfig(duration=0.1))
