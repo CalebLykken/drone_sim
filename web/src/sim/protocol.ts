@@ -32,6 +32,7 @@ export interface DroneParams {
 export interface SimInfo {
   python: string;
   numpy: string;
+  backend?: "local"; // set by the local Python server; absent in the browser
   scenarios: string[];
   params: DroneParams;
 }

@@ -5,6 +5,7 @@
 // `python -m drone_sim`. Only src/python/bridge.py is web-specific.
 
 import bridgeSource from "../python/bridge.py?raw";
+import { toPlaybackResult } from "./convert";
 import type {
   ControllerFile,
   FromWorker,
@@ -157,10 +158,6 @@ const CHUNK = 125; // control steps (0.5 s of sim time) between progress reports
 
 const yieldToMessages = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function toFloat64(values: number[]): Float64Array {
-  return Float64Array.from(values);
-}
-
 async function runPlayback(id: number, opts: SimOptions): Promise<[PlaybackResult, Transferable[]]> {
   const pb = await withPackages(() => bridge!.Playback(JSON.stringify(opts)));
   try {
@@ -171,28 +168,7 @@ async function runPlayback(id: number, opts: SimOptions): Promise<[PlaybackResul
       await yieldToMessages();
       if (cancelled.delete(id)) throw new Error("Cancelled");
     }
-    const raw = JSON.parse(pb.result());
-    const transfer: Transferable[] = [];
-    const arr = (values: number[]) => {
-      const a = toFloat64(values);
-      transfer.push(a.buffer);
-      return a;
-    };
-    const result: PlaybackResult = {
-      ...raw,
-      options: opts,
-      t: arr(raw.t),
-      wind: arr(raw.wind),
-      drones: raw.drones.map((d: Record<string, unknown>) => ({
-        ...d,
-        pos: arr(d.pos as number[]),
-        quat: arr(d.quat as number[]),
-        euler: arr(d.euler as number[]),
-        target: arr(d.target as number[]),
-        thrust: arr(d.thrust as number[]),
-      })),
-    };
-    return [result, transfer];
+    return toPlaybackResult(JSON.parse(pb.result()), opts);
   } finally {
     pb.destroy();
   }

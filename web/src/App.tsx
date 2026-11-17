@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { controllers } from "./controllers";
-import { type SimStatus, useSimNotice, useSimStatus } from "./sim/client";
+import { type SimStatus, sim, useSimNotice, useSimStatus } from "./sim/client";
 import type { PlaybackResult } from "./sim/protocol";
 import { ControllersView } from "./views/ControllersView";
 import { FlyView } from "./views/FlyView";
@@ -131,19 +131,47 @@ export function App() {
 function PythonStatus({ status }: { status: SimStatus }) {
   const notice = useSimNotice();
   if (status.state === "ready" && notice) return <span className="py-status loading">{notice}…</span>;
-  if (status.state === "ready")
+  if (status.state === "ready" && status.info.backend === "local")
     return (
-      <span className="py-status ready" title="drone_sim runs in your browser with Pyodide">
-        Python {status.info.python}, numpy {status.info.numpy}
+      <span className="py-status ready" title="drone_sim runs in Python on this computer (web/src/python/server.py)">
+        Local Python {status.info.python}, numpy {status.info.numpy}
       </span>
     );
-  if (status.state === "error") return <span className="py-status error">Python didn't start</span>;
+  if (status.state === "ready")
+    return (
+      <span
+        className="py-status ready"
+        title={
+          sim.localUnavailable
+            ? `Couldn't use the local Python (${sim.localUnavailable}), so drone_sim runs in your browser with Pyodide`
+            : "drone_sim runs in your browser with Pyodide"
+        }
+      >
+        Python {status.info.python}, numpy {status.info.numpy}
+        {sim.localUnavailable && " (in browser)"}
+      </span>
+    );
+  if (status.state === "error")
+    return <span className="py-status error">{status.local ? "Local Python disconnected" : "Python didn't start"}</span>;
   return <span className="py-status loading">{status.text}…</span>;
 }
 
 const BOOT_STEPS = ["Downloading Python", "Loading numpy", "Loading drone_sim"];
 
 function Boot({ status }: { status: SimStatus }) {
+  if (status.state === "error" && status.local) {
+    return (
+      <div className="boot">
+        <div className="boot-card panel" role="alert">
+          <h1>Local Python disconnected</h1>
+          <p>{status.error}</p>
+          <button type="button" className="primary" onClick={() => window.location.reload()}>
+            Reload
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (status.state === "error") {
     return (
       <div className="boot">
