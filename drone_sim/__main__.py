@@ -81,9 +81,6 @@ def main(argv=None):
         sim = Simulator(drones=specs, config=config)
     except ValueError as e:
         ap.error(f"{e} (try a bigger --spacing, or --ghost)")
-    show = not (args.no_gui or args.save)
-    if n > 1 and (show or args.live or args.save):
-        print("note: the graphics currently draw only the first drone", file=sys.stderr)
 
     if args.live:
         from .graphics.live import fly
@@ -106,16 +103,16 @@ def main(argv=None):
 
     if args.no_gui or args.live:
         return
-    result = sim.result()
+    results = sim.results()
     from .graphics.playback import animate
 
     if args.save:
-        animate(result, speed=args.speed, save=args.save)
+        animate(results, speed=args.speed, save=args.save, collisions=sim.collisions)
         print(f"saved {args.save}")
     else:
         import matplotlib.pyplot as plt
 
-        anim = animate(result, speed=args.speed)  # noqa: F841 (keep a reference alive)
+        anim = animate(results, speed=args.speed, collisions=sim.collisions)  # noqa: F841 (keep a reference alive)
         plt.show()
 
 
