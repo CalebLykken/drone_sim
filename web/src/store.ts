@@ -64,3 +64,29 @@ export function saveJson(key: string, value: unknown) {
     // Storage full or unavailable: edits still live for this session.
   }
 }
+
+// --- Scenery for the 3D views (shared by the Fly and Scenarios tabs, kept per browser) ---
+
+export type WorldName = "grid" | "forest";
+export type TimeOfDay = "day" | "evening";
+
+export const WORLDS: { name: WorldName; label: string }[] = [
+  { name: "grid", label: "Grid" },
+  { name: "forest", label: "Pine forest" },
+];
+
+export const TIMES: { name: TimeOfDay; label: string }[] = [
+  { name: "day", label: "Daytime" },
+  { name: "evening", label: "Evening" },
+];
+
+/** A store holding one of `options`, saved under `key` whenever it changes. */
+function savedChoice<T extends string>(key: string, options: { name: T }[], fallback: T): Store<T> {
+  const saved = loadJson<string>(key, fallback);
+  const store = createStore<T>(options.find((o) => o.name === saved)?.name ?? fallback);
+  store.subscribe(() => saveJson(key, store.get()));
+  return store;
+}
+
+export const worldStore = savedChoice<WorldName>("drone_sim.web.world.v1", WORLDS, "grid");
+export const timeStore = savedChoice<TimeOfDay>("drone_sim.web.time.v1", TIMES, "day");

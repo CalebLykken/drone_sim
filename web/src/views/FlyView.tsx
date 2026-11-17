@@ -4,9 +4,11 @@ import * as THREE from "three";
 import { controllers, useControllerList } from "../controllers";
 import { sim } from "../sim/client";
 import type { LiveFrame, SimInfo, SimKey } from "../sim/protocol";
-import { useDarkMode } from "../store";
+import { ScenerySelects } from "../components/Scenery";
+import { timeStore, useDarkMode, useStore, worldStore } from "../store";
 import { droneColor, HIVIS, scenarioLabel } from "../theme";
-import { DroneModel, GroundShadow, TargetMarker, Trail, type TrailHandle, World } from "../three/scene";
+import { DroneModel, GroundShadow, TargetMarker, Trail, type TrailHandle } from "../three/scene";
+import { World } from "../three/world";
 
 const KEYS: Record<string, SimKey> = {
   ArrowUp: "up",
@@ -45,6 +47,8 @@ export function FlyView({
   onEditController: (name: string) => void;
 }) {
   const dark = useDarkMode();
+  const world = useStore(worldStore);
+  const time = useStore(timeStore);
   const list = useControllerList();
   const [scenario, setScenario] = useState("square");
   const [drones, setDrones] = useState(1);
@@ -177,7 +181,7 @@ export function FlyView({
         dpr={[1, 2]}
         camera={{ fov: 55, near: 0.05, far: 300, up: [0, 0, 1], position: [-4.5, 0, 1.8] }}
       >
-        <World dark={dark} />
+        <World kind={world} time={time} />
         <ChaseCamera getFrame={() => frame.current} />
         {droneIndexes.map((i) => (
           <group key={i}>
@@ -186,7 +190,7 @@ export function FlyView({
               body={i === 0 ? HIVIS : droneColor(i, dark)}
               getPose={() => frame.current?.drones[i] ?? null}
             />
-            <GroundShadow dark={dark} getPos={() => frame.current?.drones[i]?.pos ?? null} />
+            <GroundShadow time={time} getPos={() => frame.current?.drones[i]?.pos ?? null} />
             <Trail
               ref={(t) => void (trails.current[i] = t)}
               capacity={TRAIL_POINTS}
@@ -275,6 +279,7 @@ export function FlyView({
             </select>
           </label>
         </div>
+        <ScenerySelects blurOnChange />
         {drones > 1 && <p className="hint">You fly the yellow drone. The others fly {wingman} along the same path, 1 m apart.</p>}
         <button type="button" onClick={() => setRestarts((n) => n + 1)}>
           Restart

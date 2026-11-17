@@ -1,4 +1,4 @@
-// three.js pieces shared by the Fly and Scenarios views. The scene is z-up,
+// three.js pieces shared by the Fly and Scenarios views (the scenery is in world.tsx). The scene is z-up,
 // matching drone_sim's world frame, so sim coordinates are used directly.
 // Everything that moves is updated imperatively in useFrame from a getter, so
 // 60 fps motion never re-renders React.
@@ -9,6 +9,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "rea
 import * as THREE from "three";
 import { LineMaterial, LineSegments2, LineSegmentsGeometry } from "three-stdlib";
 import type { DroneParams } from "../sim/protocol";
+import type { TimeOfDay } from "../store";
 import { HIVIS, SCENE, SIGNAL_RED } from "../theme";
 
 export const DRAW_SCALE = 2; // drawn bigger than life so it reads at a distance, as in the matplotlib views
@@ -17,38 +18,6 @@ export interface Pose {
   pos: ArrayLike<number>;
   quat: ArrayLike<number>; // (w, x, y, z), body -> world
   thrust?: ArrayLike<number>;
-}
-
-// --- Ground, sky, light ------------------------------------------------------------
-
-export function World({ dark }: { dark: boolean }) {
-  const c = SCENE[dark ? "dark" : "light"];
-  const grid = useMemo(() => {
-    const g = new THREE.GridHelper(80, 80, c.gridMajor, c.grid);
-    g.rotation.x = Math.PI / 2; // GridHelper lies in XZ; the sim's ground is XY
-    g.position.z = 0.002;
-    return g;
-  }, [c.grid, c.gridMajor]);
-  useEffect(() => () => grid.dispose(), [grid]);
-
-  return (
-    <>
-      <color attach="background" args={[c.sky]} />
-      <fog attach="fog" args={[c.sky, 16, 55]} />
-      <hemisphereLight args={[c.skyLight, c.groundLight, dark ? 1.1 : 1.4]} position={[0, 0, 1]} />
-      <directionalLight position={[5, -7, 12]} intensity={dark ? 1.4 : 1.8} />
-      <mesh position-z={-0.002}>
-        <planeGeometry args={[400, 400]} />
-        <meshStandardMaterial color={c.ground} roughness={1} />
-      </mesh>
-      <primitive object={grid} />
-      {/* Launch pad at the origin, where drone0 starts. */}
-      <mesh position-z={0.003}>
-        <ringGeometry args={[0.42, 0.5, 4, 1, Math.PI / 4]} />
-        <meshBasicMaterial color={c.pad} />
-      </mesh>
-    </>
-  );
 }
 
 // --- The drone ----------------------------------------------------------------------
@@ -167,7 +136,8 @@ export function TargetMarker({ getTarget }: { getTarget: () => ArrayLike<number>
 }
 
 /** A soft spot on the ground under the drone, fading with altitude. */
-export function GroundShadow({ getPos, dark }: { getPos: () => ArrayLike<number> | null; dark: boolean }) {
+export function GroundShadow({ getPos, time }: { getPos: () => ArrayLike<number> | null; time: TimeOfDay }) {
+  const look = SCENE[time];
   const mesh = useRef<THREE.Mesh>(null!);
   const material = useRef<THREE.MeshBasicMaterial>(null!);
   useFrame(() => {
@@ -179,13 +149,13 @@ export function GroundShadow({ getPos, dark }: { getPos: () => ArrayLike<number>
     mesh.current.visible = true;
     mesh.current.position.set(p[0], p[1], 0.004);
     const fade = Math.max(0.15, 1 - p[2] / 10);
-    material.current.opacity = (dark ? 0.5 : 0.28) * fade;
+    material.current.opacity = look.shadowOpacity * fade;
     mesh.current.scale.setScalar(1 + p[2] * 0.04);
   });
   return (
     <mesh ref={mesh}>
       <circleGeometry args={[0.32, 32]} />
-      <meshBasicMaterial ref={material} color={SCENE[dark ? "dark" : "light"].shadow} transparent depthWrite={false} />
+      <meshBasicMaterial ref={material} color={look.shadow} transparent depthWrite={false} />
     </mesh>
   );
 }

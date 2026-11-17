@@ -261,6 +261,32 @@ only web-specific Python is `web/src/python/bridge.py`, which sets up drones
 the way `__main__.py` does. `tests/test_web_bridge.py` runs it under CPython,
 so `python -m pytest tests/` catches core changes that would break the web app.
 
+The Fly and Scenarios tabs share two scenery settings, remembered per browser:
+
+- **World:** the plain grid, or a pine forest (a 6 MB download the first time
+  you pick it). The forest is only scenery: the simulator's ground is still
+  the plane z = 0, and drones fly through the trees. Its launch pad sits in a
+  clearing that the built-in scenarios fly around without touching a tree.
+- **Time of day:** Daytime or Evening, each with its own sky, sun, and light,
+  whether the page is in light or dark mode.
+
+The forest is `web/src/assets/pine-forest.glb`, a ponderosa pine stand from
+Sketchfab ("pine forest at sunset", `ponderosa_stand_sketchfab.glb`), shrunk
+from 37 MB with [gltf-transform](https://gltf-transform.dev) (meshopt
+geometry, WebP textures):
+
+```bash
+npx @gltf-transform/cli optimize ponderosa_stand_sketchfab.glb web/src/assets/pine-forest.glb \
+  --compress meshopt --texture-compress webp --texture-size 2048
+```
+
+Two textures that came with it but aren't in the `.glb` are applied in
+`web/src/three/world.tsx`, as 1024 px WebP: `forest-grass.webp`
+(`grass_color.jpg`) tiled over the ground, and `forest-rock.webp`
+(`mossy_rock_diff_1k.jpg`) on the rocks. The rocks and the fallen logs (which
+get the pines' bark) have no texture coordinates, so they're textured with a
+triplanar shader.
+
 Controller edits made in the page are kept in that browser only
 (localStorage) and never change the repo's files. To keep one, click Download
 and move the file into `controllers/`; it then works from the command line too
@@ -370,7 +396,8 @@ tests/            python -m pytest tests/
 web/              browser app (Vite + React + TypeScript, Python via Pyodide)
   src/python/bridge.py  the only web-specific Python
   src/sim/        Web Worker that loads Pyodide and the repo's Python, and its client
-  src/three/      3D scene
+  src/three/      3D scene: drones and trails (scene.tsx), sky and worlds (world.tsx)
+  src/assets/     the pine forest and its textures
   src/views/      the Fly, Scenarios and Controllers tabs
 ```
 
