@@ -35,6 +35,7 @@ class Prosocial(Controller):
     ibr_iterations = 3  # 1 = non-interactive baseline (plan against others' ideal plans)
     order = "simultaneous"  # or "sequential" (this drone responds first)
     interaction_radius = None  # m; ignore drones farther than this (None: everyone)
+    workers = None  # processes solving agents in parallel (None: one per performance core; 1: none)
 
     k_pos = 4.0  # tracking gains between replans
     k_vel = 3.0
@@ -42,7 +43,7 @@ class Prosocial(Controller):
 
     def reset(self, params):
         self.p = params
-        self.planner = PHRIPlanner(self.params, self.other_params, self.ibr_iterations, self.order)
+        self.planner = PHRIPlanner(self.params, self.other_params, self.ibr_iterations, self.order, self.workers)
         self.plan = None  # (xs, us) from the last replan
         self.plan_t = -math.inf
         self.last_stats = None
