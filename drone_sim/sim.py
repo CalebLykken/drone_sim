@@ -222,6 +222,11 @@ class Simulator:
             self.state = step(self.state, self.thrust, self.params, self.dt, wind=self.wind)
         self.k += 1
 
+    def positions(self, last: int | None = None) -> np.ndarray:
+        """(N, 3) logged positions, optionally only the most recent `last`."""
+        states = self._log["state"] if last is None else self._log["state"][-last:]
+        return np.array(states, dtype=float).reshape(-1, 13)[:, :3]
+
     def result(self) -> SimResult:
         log = {k: np.array(v, dtype=float) for k, v in self._log.items()}
         return SimResult(

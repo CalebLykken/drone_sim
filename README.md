@@ -137,9 +137,17 @@ drone_sim/
   controller.py   Controller base class (the interface you implement) and Sticks
   control.py      helpers: thrust vector -> attitude -> rotor thrusts
   sim.py          Simulator, run(), scenarios, wind/noise, controller loader
-  viz.py          matplotlib 3D animation
-  live.py         real-time keyboard flight
+  session.py      LiveSession: keys -> sticks, real-time stepping (no graphics)
+  graphics/       everything that draws (the only code that imports matplotlib)
+    drone.py        drone model shared by both views
+    playback.py     animate a finished SimResult
+    live.py         window for keyboard flight around a LiveSession
   __main__.py     command line
 controllers/      example controllers
 tests/            python -m pytest tests/
 ```
+
+Graphics only read from the core (`SimResult`, `Simulator`, `LiveSession`);
+nothing outside `graphics/` imports it, and a test enforces that controllers
+and the simulator load without matplotlib. A new front end needs an
+`animate(result)` and a `fly(session)`; see `drone_sim/graphics/__init__.py`.

@@ -171,3 +171,63 @@ def test_simulator_reset_starts_over():
     fly_sticks(sim, 1.0, throttle=1.0)
     sim.reset()
     assert sim.k == 0 and sim.state.z == 0.0 and not sim.result().t.size
+
+
+# --- Separation between graphics and everything else -----------------------------
+
+def test_core_and_controllers_do_not_import_graphics():
+    """Controllers and the sim must run without matplotlib or drone_sim.graphics."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, drone_sim, drone_sim.control, drone_sim.session\n"
+        "from drone_sim import load_controller, run, SimConfig\n"
+        "for name in ('pid', 'manual', 'hover_only'):\n"
+        f"    run(load_controller({str(ROOT / 'controllers')!r} + f'/{{name}}.py'), SimConfig(duration=0.1))\n"
+        "bad = sorted(m for m in sys.modules if m.startswith(('matplotlib', 'drone_sim.graphics')))\n"
+        "assert not bad, bad\n"
+    )
+    subprocess.run([sys.executable, "-c", code], cwd=ROOT, check=True)
+
+
+# --- LiveSession (real-time flight logic, no window) -------------------------------
+
+def live_session():
+    from drone_sim.session import LiveSession
+
+    return LiveSession(manual_sim())
+
+
+def tick_for(session, seconds, frame=1 / 30):
+    for _ in range(int(seconds / frame)):
+        session.tick(frame)
+
+
+def test_live_session_keys_fly_the_drone():
+    session = live_session()
+    session.key_down("up")
+    tick_for(session, 1.5)
+    assert session.sticks.throttle == pytest.approx(1.0, abs=1e-3)
+    assert session.sim.state.z > 1.0
+    assert session.sim.t == pytest.approx(1.5, abs=0.05)  # sim time follows wall time
+
+    session.key_up("up")
+    session.key_down("W")  # case-insensitive
+    tick_for(session, 1.5)
+    assert session.sim.state.vel[0] > 2.0
+
+    session.release_all()
+    tick_for(session, 1.0)
+    assert session.sticks.pitch == pytest.approx(0.0, abs=1e-3)
+
+
+def test_live_session_caps_stalls_and_resets():
+    session = live_session()
+    session.tick(5.0)  # e.g. the window was dragged; don't jump ahead 5 s
+    assert session.sim.t <= 0.1 + 1e-9
+    session.key_down("up")
+    tick_for(session, 0.5)
+    session.key_down("r")
+    assert session.sim.k == 0 and session.sticks == Sticks()
+    assert "r" not in session.pressed

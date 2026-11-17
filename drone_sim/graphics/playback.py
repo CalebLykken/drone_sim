@@ -4,16 +4,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
 
-from .dynamics import quat_to_rot
-from .sim import SimResult
-
-DRAW_SCALE = 2.0  # draw the drone bigger than life so it's visible
-ROTOR_COLORS = ["tab:red", "tab:red", "0.3", "0.3"]  # front rotors red
-
-
-def _rotor_ring(center, radius, n=16):
-    a = np.linspace(0, 2 * np.pi, n)
-    return center + radius * np.column_stack([np.cos(a), np.sin(a), np.zeros(n)])
+from ..dynamics import quat_to_rot
+from ..sim import SimResult
+from .drone import DroneArtist
 
 
 def animate(result: SimResult, speed: float = 1.0, save: str | None = None, fps: int = 30):
@@ -21,9 +14,6 @@ def animate(result: SimResult, speed: float = 1.0, save: str | None = None, fps:
     t, pos, tgt = result.t, result.pos, result.targets
     eul = np.degrees(result.euler)
     eul[:, 2] = np.degrees(np.unwrap(result.euler[:, 2]))  # no jumps at +-180
-    rotors_body = result.params.rotor_positions * DRAW_SCALE
-    ring_r = 0.35 * result.params.arm_length * DRAW_SCALE
-    rings_body = [_rotor_ring(r, ring_r) for r in rotors_body]
 
     fig = plt.figure(figsize=(14, 7))
     gs = fig.add_gridspec(4, 2, width_ratios=[1.4, 1])
@@ -48,9 +38,7 @@ def animate(result: SimResult, speed: float = 1.0, save: str | None = None, fps:
     trail, = ax3.plot([], [], [], "-", color="tab:blue", alpha=0.6, lw=1)
     shadow, = ax3.plot([], [], [], "-", color="0.6", alpha=0.5, lw=1)
     target_pt, = ax3.plot([], [], [], "x", color="tab:red", ms=10, mew=2)
-    arms = [ax3.plot([], [], [], "-", color="k", lw=3)[0] for _ in range(2)]
-    rings = [ax3.plot([], [], [], "-", color=c, lw=2)[0] for c in ROTOR_COLORS]
-    up, = ax3.plot([], [], [], "-", color="tab:green", lw=1.5)
+    drone = DroneArtist(ax3, result.params)
     info = ax3.text2D(0.02, 0.97, "", transform=ax3.transAxes, va="top", family="monospace")
 
     def series(ax, ys, labels, ylabel, styles=None):
@@ -80,17 +68,7 @@ def animate(result: SimResult, speed: float = 1.0, save: str | None = None, fps:
     frames = np.searchsorted(t, np.arange(0, t[-1], frame_dt))
 
     def draw(k):
-        p = pos[k]
-        R = quat_to_rot(result.states[k, 6:10])
-        world = rotors_body @ R.T + p
-        for arm, (i, j) in zip(arms, [(0, 2), (1, 3)]):
-            seg = world[[i, j]]
-            arm.set_data_3d(seg[:, 0], seg[:, 1], seg[:, 2])
-        for ring, rb in zip(rings, rings_body):
-            w = rb @ R.T + p
-            ring.set_data_3d(w[:, 0], w[:, 1], w[:, 2])
-        tip = p + R[:, 2] * 0.3 * DRAW_SCALE
-        up.set_data_3d([p[0], tip[0]], [p[1], tip[1]], [p[2], tip[2]])
+        drone.update(pos[k], quat_to_rot(result.states[k, 6:10]))
         trail.set_data_3d(pos[: k + 1, 0], pos[: k + 1, 1], pos[: k + 1, 2])
         shadow.set_data_3d(pos[: k + 1, 0], pos[: k + 1, 1], np.zeros(k + 1))
         target_pt.set_data_3d([tgt[k, 0]], [tgt[k, 1]], [tgt[k, 2]])
