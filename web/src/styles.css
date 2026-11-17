@@ -1,0 +1,1721 @@
+/* drone_sim web: global styles.
+ *
+ * A flight-test range on an overcast day (light) or at dusk (dark). The 3D
+ * scene is the hero; chrome stays quiet. Hi-vis yellow is the one loud color:
+ * the primary button, the active tab, the play button and held keycaps.
+ *
+ * The Controllers tab has its own stylesheet (views/controllers.css, `ctl-`).
+ */
+
+/* --- Tokens ------------------------------------------------------------------ */
+
+:root {
+  color-scheme: light;
+
+  --bg: #e6ebef;
+  --surface: #f7f9fa;
+  --surface-2: #eef2f5;
+  --ink: #18212b;
+  --ink-2: #4a5562;
+  --muted: #77828e;
+  --line: rgba(24, 33, 43, 0.12);
+  --grid: #e0e5ea;
+  --hivis: #f2b705;
+  --hivis-ink: #18212b;
+  --signal: #d64545;
+  --good: #1f7a3a;
+  --bad: #c03636;
+  --focus: #2a78d6;
+
+  --radius: 6px;
+  --radius-lg: 10px;
+  --font: "Barlow", system-ui, sans-serif;
+  --font-cond: "Barlow Semi Condensed", "Barlow", system-ui, sans-serif;
+  --font-code: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Derived */
+  --overlay: color-mix(in srgb, var(--surface) 88%, transparent);
+  --hover: color-mix(in srgb, var(--ink) 6%, transparent);
+  --line-strong: color-mix(in srgb, var(--ink) 24%, transparent);
+  --key-edge: color-mix(in srgb, var(--ink) 24%, transparent); /* keycap and kbd bottom edge */
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5l3 3 3-3' fill='none' stroke='%234a5562' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --bg: #11161c;
+    --surface: #1d242c;
+    --surface-2: #252e37;
+    --ink: #e8edf1;
+    --ink-2: #a9b4bf;
+    --muted: #7d8894;
+    --line: rgba(232, 237, 241, 0.12);
+    --grid: #2a333c;
+    --hivis: #f5c02e;
+    --hivis-ink: #18212b;
+    --signal: #e5605a;
+    --good: #4cc27a;
+    --bad: #ef7a74;
+    --focus: #3987e5;
+
+    --hover: color-mix(in srgb, var(--ink) 7%, transparent);
+    --key-edge: rgba(0, 0, 0, 0.5);
+    --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5l3 3 3-3' fill='none' stroke='%23a9b4bf' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+}
+
+/* Barlow's latin subset has ↑ and ↓ but not ← and →, so the four arrows would
+ * come from two different fonts. Take all four from one system font instead. */
+@font-face {
+  font-family: "Key Arrows";
+  src: local("Arial"), local("ArialMT"), local("Helvetica"), local("Segoe UI"), local("Roboto");
+  font-weight: 100 900;
+  unicode-range: U+2190-2193;
+}
+
+/* --- Base -------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font: 15px/1.45 var(--font);
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--focus) 28%, transparent);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-family: var(--font-cond);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--ink);
+}
+
+h1 {
+  font-size: 24px;
+}
+
+h2 {
+  font-size: 18px;
+}
+
+a {
+  color: var(--focus);
+}
+
+figure {
+  margin: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Controls */
+
+button,
+select,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: var(--font-cond);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+button.primary {
+  background: var(--hivis);
+  border-color: transparent;
+  color: var(--hivis-ink);
+  font-weight: 600;
+}
+
+button.quiet {
+  background: transparent;
+  border-color: var(--line);
+}
+
+@media (hover: hover) {
+  button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--ink) 7%, var(--surface-2));
+  }
+
+  button.primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--hivis) 88%, #000);
+  }
+
+  button.quiet:hover:not(:disabled) {
+    background: var(--hover);
+    border-color: var(--line-strong);
+  }
+}
+
+button:disabled,
+select:disabled,
+input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+select,
+input[type="number"] {
+  display: block;
+  width: 100%;
+  height: 34px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background-color: var(--surface-2);
+  color: var(--ink);
+  font-size: 14px;
+  transition: border-color 120ms ease;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0 28px 0 10px;
+  background-image: var(--chevron);
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 12px 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+select option {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+input[type="number"] {
+  padding: 0 10px;
+  font-family: var(--font-cond);
+  font-size: 15px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+@media (hover: hover) {
+  select:hover:not(:disabled),
+  input[type="number"]:hover:not(:disabled) {
+    border-color: var(--line-strong);
+  }
+}
+
+input[type="range"] {
+  display: block;
+  width: 100%;
+  height: 24px;
+  margin: 0;
+  background: transparent;
+  accent-color: var(--hivis);
+  cursor: pointer;
+}
+
+input[type="checkbox"] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--hivis);
+  cursor: pointer;
+}
+
+/* A label wraps <span>Label text</span> and then its control, stacked. */
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+label > span:first-child {
+  font-family: var(--font-cond);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--ink-2);
+}
+
+label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+label.check > span {
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--ink);
+}
+
+fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 4px 0 0;
+  padding: 10px 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+legend {
+  padding: 0 8px 0 0;
+  font-family: var(--font-cond);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Number field: the unit sits inside the box, on the right. */
+.number {
+  position: relative;
+  display: block;
+}
+
+.number input:not(:last-child) {
+  padding-right: 30px;
+}
+
+.number .unit {
+  position: absolute;
+  top: 0;
+  right: 10px;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  font-family: var(--font-cond);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1.75em;
+  padding: 0.2em 0.4em 0.1em;
+  border: 1px solid var(--line);
+  border-bottom: 2px solid var(--key-edge);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: "Key Arrows", var(--font-cond);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  vertical-align: 0.05em;
+}
+
+pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: var(--font-code);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Python tracebacks and other error output. */
+.boot-error,
+.fly-error pre,
+.form-error pre {
+  border-color: color-mix(in srgb, var(--bad) 30%, transparent);
+  background: color-mix(in srgb, var(--bad) 7%, var(--surface-2));
+  color: var(--bad);
+}
+
+/* --- Shared bits --------------------------------------------------------------- */
+
+.panel {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.row > select,
+.row > input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.row > button {
+  flex: none;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+/* --- App shell ----------------------------------------------------------------- */
+
+.app {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 48px minmax(0, 1fr);
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.brand {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-family: var(--font-cond);
+  font-size: 17px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.brand svg {
+  flex: none;
+  width: 22px;
+  height: 22px;
+}
+
+.brand-arms {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.brand-front,
+.brand-back {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.brand-front {
+  stroke: var(--signal);
+}
+
+.brand-back {
+  stroke: var(--ink-2);
+}
+
+.brand-body {
+  fill: var(--hivis);
+}
+
+.tabs {
+  display: flex;
+  flex: 0 1 auto;
+  align-self: stretch;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+button.tab {
+  position: relative;
+  flex: none;
+  height: auto;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+button.tab::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  bottom: 0;
+  left: 10px;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+@media (hover: hover) {
+  button.tab:hover:not(:disabled) {
+    background: transparent;
+    color: var(--ink);
+  }
+
+  button.tab:hover:not([aria-selected="true"])::after {
+    background: var(--line);
+  }
+}
+
+button.tab[aria-selected="true"] {
+  color: var(--ink);
+}
+
+button.tab[aria-selected="true"]::after {
+  background: var(--hivis);
+}
+
+button.tab:focus-visible {
+  outline-offset: -4px;
+  border-radius: var(--radius);
+}
+
+.py-status {
+  display: block;
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--font-cond);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.py-status::before {
+  content: "";
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: 1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.py-status.ready::before {
+  background: var(--good);
+}
+
+.py-status.error {
+  color: var(--bad);
+}
+
+.py-status.error::before {
+  background: var(--bad);
+}
+
+.app-main {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+}
+
+/* Boot screen */
+
+.boot {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 24px 16px;
+}
+
+.boot-card {
+  display: grid;
+  gap: 12px;
+  width: min(100%, 480px);
+  padding: 24px 28px 28px;
+}
+
+.boot-card p {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.boot-card > button {
+  justify-self: start;
+}
+
+.boot-error {
+  max-height: 40vh;
+}
+
+.boot-steps {
+  display: grid;
+  gap: 10px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.boot-steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-family: var(--font-cond);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.boot-steps li::before {
+  content: "";
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.boot-steps li.done {
+  color: var(--ink-2);
+}
+
+.boot-steps li.done::before {
+  border: 0;
+  border-radius: 0;
+  background: var(--good);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.boot-steps li.active {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.boot-steps li.active::before {
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--ink-2);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+/* --- Fly ----------------------------------------------------------------------- */
+
+/* The canvas fills the view; the overlays sit in a grid on top of it so they
+ * can never overlap each other:
+ *   HUD      | banner | settings
+ *   .        | .      | settings
+ *   help ---------    | keycaps          */
+.fly {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  height: 100%;
+  padding: 16px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* R3F puts position: relative inline on its wrapper. */
+.fly-canvas {
+  position: absolute !important;
+  inset: 0;
+}
+
+.hud,
+.fly-settings,
+.fly-help,
+.fly-banner,
+.fly-error {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--overlay);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.hud,
+.fly-settings,
+.fly-help,
+.fly-banner,
+.keycaps {
+  position: relative;
+  z-index: 1;
+}
+
+/* HUD */
+
+.hud {
+  grid-area: 1 / 1;
+  align-self: start;
+  justify-self: start;
+  display: grid;
+  gap: 6px;
+  padding: 10px 14px;
+  font-family: var(--font-cond);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+}
+
+.hud-readouts {
+  display: flex;
+  gap: 20px;
+}
+
+.hud-readouts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.hud-value {
+  min-width: 3.4ch;
+  color: var(--ink);
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.hud-unit {
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.hud-line {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.hud-readouts + .hud-line {
+  margin-top: 2px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+}
+
+.hud-dim {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.hud-dim span {
+  white-space: pre; /* keeps the double space between roll and pitch */
+}
+
+.hud-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hud-target svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: var(--signal);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.hud-target svg path {
+  vector-effect: non-scaling-stroke;
+}
+
+.hud-line.on-target .hud-target {
+  color: var(--good);
+  font-weight: 600;
+}
+
+/* Settings */
+
+.fly-settings {
+  z-index: 3; /* stays usable over the paused scrim */
+  grid-column: 3;
+  grid-row: 1 / 3;
+  align-self: start;
+  justify-self: end;
+  display: grid;
+  gap: 10px;
+  width: 260px;
+  max-height: 100%;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+}
+
+.fly-settings > button {
+  width: 100%;
+}
+
+/* Help */
+
+.fly-help {
+  grid-column: 1 / 3;
+  grid-row: 3;
+  align-self: end;
+  justify-self: start;
+  max-width: 420px;
+  padding: 7px 12px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.85;
+  pointer-events: none;
+}
+
+/* Keycaps: on-screen keys that light up when held and work as touch controls. */
+
+.keycaps {
+  --key: 44px;
+  grid-column: 3;
+  grid-row: 3;
+  align-self: end;
+  justify-self: end;
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.keycap-cluster {
+  display: grid;
+  grid-template-columns: repeat(3, var(--key));
+  grid-template-rows: repeat(2, var(--key));
+  grid-template-areas:
+    ". up ."
+    "left down right";
+  gap: 5px;
+}
+
+button.keycap {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-bottom: 3px solid var(--key-edge);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: "Key Arrows", var(--font-cond);
+  font-size: 17px;
+  font-weight: 600;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  transition:
+    transform 70ms ease,
+    background-color 70ms ease,
+    border-color 70ms ease;
+}
+
+@media (hover: hover) {
+  button.keycap:hover:not(.held) {
+    background: color-mix(in srgb, var(--ink) 6%, var(--surface-2));
+  }
+}
+
+button.keycap.held,
+button.keycap.held:hover {
+  border-color: color-mix(in srgb, var(--hivis-ink) 22%, var(--hivis));
+  border-bottom-width: 1px;
+  background: var(--hivis);
+  color: var(--hivis-ink);
+  transform: translateY(2px);
+}
+
+@media (pointer: coarse) {
+  .keycaps {
+    --key: 48px;
+  }
+}
+
+/* Crash banner */
+
+.fly-banner {
+  grid-area: 1 / 2;
+  align-self: start;
+  justify-self: center;
+  max-width: 480px;
+  padding: 8px 14px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.fly-banner strong {
+  color: var(--bad);
+  font-family: var(--font-cond);
+  font-weight: 600;
+}
+
+/* Paused: a scrim over the whole view; clicking it resumes. */
+
+button.fly-paused {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  border: 0;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  color: var(--ink);
+  font-family: var(--font);
+  font-weight: 400;
+  line-height: 1.3;
+  white-space: normal;
+  text-align: center;
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+@media (hover: hover) {
+  button.fly-paused:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--bg) 50%, transparent);
+  }
+}
+
+button.fly-paused:focus-visible {
+  outline-offset: -6px;
+}
+
+.fly-paused strong {
+  font-family: var(--font-cond);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.fly-paused span {
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
+/* Controller error */
+
+.fly-error {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  gap: 12px;
+  width: min(640px, calc(100% - 32px));
+  height: fit-content;
+  max-height: calc(100% - 32px);
+  margin: auto;
+  padding: 18px 20px 20px;
+  overflow: auto;
+}
+
+.fly-error pre {
+  max-height: 50vh;
+}
+
+/* Under ~960px the middle column is too narrow for the banner: put it under the HUD. */
+@media (max-width: 960px) {
+  .fly-banner {
+    grid-column: 1 / 3;
+    grid-row: 2;
+    justify-self: start;
+  }
+}
+
+/* --- Scenarios ------------------------------------------------------------------ */
+
+.scenarios {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr) minmax(320px, 420px);
+  height: 100%;
+  min-height: 0;
+}
+
+.scenarios > * {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* Settings sidebar */
+
+.scenario-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border-width: 0 1px 0 0;
+  border-radius: 0;
+}
+
+.scenario-form > button.primary {
+  flex: none;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.progress {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  margin-top: 4px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.progress-bar > div {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--hivis);
+}
+
+.form-error {
+  display: grid;
+  gap: 8px;
+}
+
+.form-error p {
+  margin: 0;
+  color: var(--bad);
+  font-weight: 500;
+}
+
+.form-error pre {
+  max-height: 40vh;
+}
+
+.form-error button {
+  justify-self: start;
+}
+
+/* Stage: replay, transport, metrics */
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.stage-canvas {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 320px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+}
+
+/* R3F's wrapper: fill the stage whatever its height comes from. */
+.stage-canvas > div:first-child {
+  position: absolute !important;
+  inset: 0;
+}
+
+.stage-info {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  max-width: calc(100% - 20px);
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--overlay);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: var(--ink);
+  font-family: var(--font-cond);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+}
+
+.stage-info > span + span {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.stage-info > .stage-hint {
+  color: var(--muted);
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .stage-hint {
+    display: none;
+  }
+}
+
+.stage-empty {
+  display: grid;
+  flex: 1 1 0;
+  place-items: center;
+  min-height: 320px;
+  padding: 24px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+  color: var(--muted);
+  font-family: var(--font-cond);
+  font-size: 16px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.transport {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+button.play {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--hivis);
+}
+
+@media (hover: hover) {
+  button.play:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--hivis) 88%, #000);
+  }
+}
+
+button.play svg {
+  width: 14px;
+  height: 14px;
+  fill: var(--hivis-ink);
+}
+
+input.scrub {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 60px;
+  accent-color: var(--hivis);
+}
+
+.time {
+  flex: none;
+  color: var(--ink);
+  font-family: var(--font-cond);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.time .of {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.transport select {
+  flex: none;
+  width: auto;
+  font-family: var(--font-cond);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.metrics {
+  flex: none;
+  overflow-x: auto;
+}
+
+.metrics table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.metrics th,
+.metrics td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.metrics th:first-child,
+.metrics td:first-child {
+  padding-left: 2px;
+}
+
+.metrics thead th {
+  color: var(--ink-2);
+  font-family: var(--font-cond);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: normal;
+  border-bottom-color: var(--line-strong);
+}
+
+.metrics tbody th {
+  font-family: var(--font-cond);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.metrics td {
+  font-family: var(--font-cond);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+/* First column (drone) and last column (outcome) are text: left-aligned. */
+.metrics th:first-child,
+.metrics th:last-child,
+.metrics td:last-child {
+  text-align: left;
+}
+
+.metrics td.good,
+.metrics td.bad {
+  font-family: var(--font);
+  font-size: 14px;
+  white-space: normal;
+}
+
+.metrics td.good {
+  color: var(--good);
+}
+
+.metrics td.bad {
+  color: var(--bad);
+}
+
+.status-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+  border-radius: 50%;
+  color: var(--surface);
+  font-family: var(--font-cond);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: -2px;
+}
+
+.good .status-icon {
+  background: var(--good);
+}
+
+.bad .status-icon {
+  background: var(--bad);
+}
+
+.collisions {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ink-2);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.collisions li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.collisions li::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bad);
+  transform: translateY(-1px);
+}
+
+/* Charts column */
+
+.charts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 14px 18px;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.chart-drone {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.chart-drone > span:first-child {
+  flex: none;
+}
+
+.chart-drone select {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+figure.chart {
+  flex: none;
+  min-width: 0;
+}
+
+figcaption {
+  margin-bottom: 2px;
+  color: var(--ink);
+  font-family: var(--font-cond);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+/* The cond family ships 500 as its lightest weight; it reads as regular here. */
+.chart-unit {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.chart-plot {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Playback cursor, moved with transform: translateX by TimeChart. */
+.chart-cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: var(--ink);
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* uPlot overrides. Its own CSS loads after this file, so these carry `.chart`
+ * for the extra specificity. */
+.chart .uplot {
+  font-family: var(--font-cond);
+  line-height: 1.3;
+}
+
+.chart .u-over {
+  cursor: col-resize;
+  touch-action: pan-y;
+}
+
+.chart .u-hz .u-cursor-x {
+  border-right: 1px dashed var(--muted);
+}
+
+.chart .u-legend {
+  margin: 4px 0 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+}
+
+.chart .u-inline tr {
+  margin-right: 10px;
+}
+
+.chart .u-series > * {
+  padding: 1px 0;
+}
+
+.chart .u-legend th {
+  font-weight: 500;
+}
+
+/* Marker as a short line swatch: uPlot sets the border (color and dash) inline. */
+.chart .u-legend .u-marker {
+  width: 12px;
+  height: 0;
+  margin-right: 5px;
+  border-radius: 1px;
+}
+
+.chart .u-series:first-child .u-marker {
+  display: none;
+}
+
+.chart .u-legend .u-label {
+  color: var(--ink-2);
+}
+
+.chart .u-inline.u-live th::after {
+  color: var(--muted);
+}
+
+.chart .u-legend .u-value {
+  min-width: 3.6em;
+  padding-left: 3px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+/* --- Medium screens: Scenarios goes to two rows, the page scrolls ----------------- */
+
+@media (max-width: 1100px) {
+  .scenarios {
+    grid-template-columns: 260px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    height: auto;
+    min-height: 100%;
+  }
+
+  .scenarios > * {
+    overflow: visible;
+  }
+
+  .stage-canvas {
+    flex: none;
+    height: clamp(300px, 52vh, 560px);
+    min-height: 0;
+  }
+
+  .stage-empty {
+    flex: none;
+    min-height: 300px;
+  }
+
+  .charts {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    align-items: start;
+    gap: 16px 20px;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .charts > .chart-drone {
+    grid-column: 1 / -1;
+  }
+}
+
+/* --- Small screens: one column -------------------------------------------------- */
+
+@media (max-width: 720px) {
+  /* Scenarios */
+
+  .scenarios {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scenario-form {
+    border-width: 0 0 1px;
+  }
+
+  .stage-canvas {
+    height: clamp(260px, 80vw, 440px);
+  }
+
+  .metrics th,
+  .metrics td {
+    padding: 6px 6px;
+  }
+
+  .charts {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px;
+  }
+
+  /* Fly: settings strip on top, HUD under it, keys at the bottom. */
+
+  .fly {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .fly-settings {
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: stretch;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 6px;
+    width: auto;
+    max-height: none;
+    padding: 8px;
+  }
+
+  .fly-settings > label {
+    grid-column: span 3;
+  }
+
+  /* Visually hide the first-row captions; the selects say what they are. */
+  .fly-settings > label > span:first-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .fly-settings .split {
+    display: contents;
+  }
+
+  .fly-settings .split > label {
+    grid-column: span 2;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .fly-settings .split > label > span:first-child {
+    flex: none;
+  }
+
+  .fly-settings .split select {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    padding: 0 22px 0 8px;
+    background-position: right 6px center;
+  }
+
+  .fly-settings > button {
+    grid-column: span 2;
+  }
+
+  .fly-settings > .hint {
+    grid-column: 1 / -1;
+    order: 1;
+    font-size: 12.5px;
+  }
+
+  .hud {
+    grid-area: 2 / 1;
+    padding: 8px 12px;
+  }
+
+  .hud-readouts {
+    gap: 16px;
+  }
+
+  .hud-value {
+    font-size: 24px;
+  }
+
+  .fly-banner {
+    grid-column: 1;
+    grid-row: 3;
+    justify-self: center;
+    max-width: 100%;
+    font-size: 13.5px;
+  }
+
+  .fly-help {
+    display: none;
+  }
+
+  /* WASD under the left thumb, arrows under the right. */
+  .keycaps {
+    grid-column: 1;
+    grid-row: 4;
+    justify-self: stretch;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .fly-error {
+    width: calc(100% - 16px);
+    max-height: calc(100% - 16px);
+    padding: 14px;
+  }
+
+  .fly-error pre {
+    max-height: 40vh;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar {
+    gap: 10px;
+    padding: 0 12px;
+  }
+
+  button.tab {
+    padding: 0 8px;
+  }
+
+  button.tab::after {
+    right: 8px;
+    left: 8px;
+  }
+
+  .py-status {
+    display: none;
+  }
+}
+
+/* Keep the logo, drop the wordmark, so the three tabs fit. */
+@media (max-width: 420px) {
+  .brand {
+    gap: 0;
+    font-size: 0;
+  }
+}
+
+/* --- Motion ---------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
+}

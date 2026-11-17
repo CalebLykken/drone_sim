@@ -1,0 +1,508 @@
+/* Controllers tab: file list, code editor, check result and Python console.
+   Every class here starts with ctl- so it can't collide with other views. */
+
+/* --- Layout ---------------------------------------------------------------------- */
+
+/* Wide: files | editor | output, with the help note under the file list. */
+.ctl {
+  display: grid;
+  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr) minmax(300px, 30%);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "files editor output"
+    "help  editor output";
+  gap: 12px;
+  box-sizing: border-box;
+  flex: 1 1 auto; /* fills a flex parent too */
+  min-width: 0;
+  height: 100%;
+  min-height: 520px;
+  padding: 12px;
+}
+
+.ctl-files {
+  grid-area: files;
+}
+.ctl-help {
+  grid-area: help;
+}
+.ctl-editor {
+  grid-area: editor;
+}
+.ctl-output {
+  grid-area: output;
+}
+
+.ctl > * {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* --- Shared bits ----------------------------------------------------------------- */
+
+.ctl-heading {
+  margin: 0;
+  font-family: var(--font-cond);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink-2);
+}
+
+.ctl code {
+  font-family: var(--font-code);
+  font-size: 0.92em;
+}
+
+.ctl-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ctl .ctl-danger {
+  color: var(--signal);
+}
+
+.ctl .ctl-danger-strong {
+  border-color: var(--signal);
+  background: transparent;
+  color: var(--signal);
+  font-weight: 600;
+}
+.ctl .ctl-danger-strong:hover {
+  background: var(--surface);
+}
+
+/* --- File list ------------------------------------------------------------------- */
+
+.ctl-files.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.ctl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.ctl .ctl-file {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 0;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+}
+.ctl .ctl-file:hover {
+  background: var(--surface-2);
+}
+.ctl .ctl-file[aria-current="true"] {
+  border-color: var(--line);
+  background: var(--surface-2);
+  box-shadow: inset 3px 0 0 var(--hivis);
+}
+.ctl .ctl-file[aria-current="true"] .ctl-file-name {
+  font-weight: 600;
+}
+.ctl .ctl-file:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.ctl-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-code);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctl-tags {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+}
+
+.ctl-tag {
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--font-cond);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.ctl-tag-yours {
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+.ctl-tag-edited {
+  border-color: var(--hivis);
+  background: color-mix(in srgb, var(--hivis) 24%, transparent);
+  color: var(--ink);
+}
+
+.ctl-list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* New controller form */
+.ctl-new {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.ctl-new input {
+  box-sizing: border-box;
+  width: 100%;
+  font-family: var(--font-code);
+}
+.ctl-new input[aria-invalid="true"] {
+  border-color: var(--signal);
+}
+.ctl-problem {
+  margin: 0;
+  color: var(--signal);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* Help note */
+.ctl-help {
+  overflow-y: auto;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.ctl-help p {
+  margin: 0 0 6px;
+}
+.ctl-help p:last-child {
+  margin-bottom: 0;
+}
+
+/* --- Editor ---------------------------------------------------------------------- */
+
+.ctl-editor.panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.ctl-toolbar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ctl-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ctl-title h2 {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-code);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* Check's busy state */
+.ctl .ctl-busy {
+  cursor: progress;
+}
+.ctl-busy::before {
+  content: "";
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: 6px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -0.1em;
+  animation: ctl-spin 0.8s linear infinite;
+}
+@keyframes ctl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ctl-busy::before {
+    animation-duration: 2.4s;
+  }
+}
+
+/* Inline confirmation for Revert and Delete */
+.ctl-confirm {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  border-left: 3px solid var(--signal);
+  background: var(--surface-2);
+}
+.ctl-confirm p {
+  flex: 1 1 240px;
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.4;
+}
+
+/* CodeMirror: the wrapper takes the leftover height and the editor fills it,
+   so long files scroll inside the editor instead of stretching the page. */
+.ctl-cm {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+}
+.ctl-cm > .cm-editor {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.ctl-cm .cm-editor {
+  background: var(--surface);
+}
+.ctl-cm .cm-editor.cm-focused {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.ctl-cm .cm-editor .cm-scroller {
+  font-family: var(--font-code);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.ctl-cm .cm-editor .cm-gutters {
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.ctl-empty {
+  margin: 0;
+  padding: 16px;
+}
+
+/* --- Output: check result and Python console -------------------------------------- */
+
+.ctl-output.panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.ctl-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 14px;
+}
+
+.ctl-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ctl-check {
+  flex: 0 1 auto;
+  max-height: 55%;
+  overflow-y: auto;
+}
+
+.ctl-status p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.ctl-ok {
+  color: var(--ink);
+}
+.ctl-tick {
+  color: var(--good);
+  font-weight: 700;
+}
+.ctl-bad {
+  color: var(--bad);
+  font-weight: 600;
+}
+.ctl-fail {
+  color: var(--signal);
+  font-weight: 600;
+}
+
+.ctl-traceback,
+.ctl-log {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: var(--font-code);
+  font-size: 12.5px;
+  line-height: 1.5;
+  tab-size: 4;
+}
+
+.ctl-traceback {
+  flex: none;
+  overflow-x: auto;
+  border-left: 3px solid var(--signal);
+  white-space: pre;
+}
+
+.ctl-console {
+  flex: 1 1 0;
+  border-top: 1px solid var(--line);
+}
+
+.ctl-log {
+  flex: 1 1 0;
+  min-height: 80px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ctl-log-empty {
+  margin: 0;
+}
+
+.ctl-traceback:focus-visible,
+.ctl-log:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* --- Responsive (kept last so these override the rules above) ------------------- */
+
+/* Medium: output moves under the editor, check result and console side by side. */
+@media (max-width: 1199px) {
+  .ctl {
+    grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(220px, 36%);
+    grid-template-areas:
+      "files editor"
+      "help  output";
+  }
+  .ctl-output.panel {
+    flex-direction: row;
+  }
+  .ctl-check {
+    flex: 1 1 0;
+    max-height: none;
+  }
+  .ctl-console {
+    border-top: 0;
+    border-left: 1px solid var(--line);
+  }
+}
+
+/* Narrow: everything stacks and the page scrolls. */
+@media (max-width: 759px) {
+  .ctl {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 12px 16px 24px;
+    overflow-y: auto;
+  }
+  .ctl > * {
+    flex: none;
+  }
+  .ctl-files {
+    order: 1;
+  }
+  .ctl-editor {
+    order: 2;
+  }
+  .ctl-output {
+    order: 3;
+  }
+  .ctl-help {
+    order: 4;
+  }
+  .ctl-cm {
+    flex: none;
+    height: max(320px, 60vh);
+    height: max(320px, 60dvh);
+  }
+  .ctl-output.panel {
+    flex-direction: column;
+  }
+  .ctl-check {
+    flex: none;
+    max-height: none;
+    overflow: visible;
+  }
+  .ctl-console {
+    flex: none;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .ctl-log {
+    flex: none;
+    height: 220px;
+  }
+}
