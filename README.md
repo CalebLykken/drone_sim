@@ -96,6 +96,40 @@ your own flight mode (e.g. angle mode or acro) and fly it with
 `--live --controller path/to/yours.py`. You can also fly an autonomous
 controller live, e.g. `--live -c controllers/pid.py -s figure8`.
 
+## Web app
+
+`web/` runs the same simulator in a browser tab, with the Python running in
+the page (Pyodide in a Web Worker) and no server:
+
+- **Fly** tab: fly with the keyboard; the on-screen keys also work as touch controls
+- **Scenarios** tab: run a scenario and replay it in 3D with plots
+- **Controllers** tab: edit controllers in Python in the page
+
+Requires Node 18+.
+
+```bash
+cd web
+npm install
+npm run dev        # open the localhost URL it prints
+npm run build      # static site in web/dist/
+```
+
+The build uses relative paths, so `web/dist/` can be served by any static
+host (e.g. GitHub Pages). The first load downloads about 12 MB of Python
+(Pyodide 0.29.4 and numpy) from cdn.jsdelivr.net; it is cached afterwards.
+
+The page bundles `drone_sim/` and `controllers/` straight from the repo at
+build time (`graphics/` is left out), so changes to the simulator or a new
+file in `controllers/` show up in the web app without touching `web/`. The
+only web-specific Python is `web/src/python/bridge.py`, which sets up drones
+the way `__main__.py` does. `tests/test_web_bridge.py` runs it under CPython,
+so `python -m pytest tests/` catches core changes that would break the web app.
+
+Controller edits made in the page are kept in that browser only
+(localStorage) and never change the repo's files. To keep one, click Download
+and move the file into `controllers/`; it then works from the command line too
+and shows up in the web app's list for everyone.
+
 ## Writing your own controller
 
 Make a `.py` file anywhere with one subclass of `drone_sim.Controller`:
@@ -191,6 +225,12 @@ drone_sim/
   __main__.py     command line
 controllers/      example controllers
 tests/            python -m pytest tests/
+  test_web_bridge.py  runs web/src/python/bridge.py under CPython
+web/              browser app (Vite + React + TypeScript, Python via Pyodide)
+  src/python/bridge.py  the only web-specific Python
+  src/sim/        Web Worker that loads Pyodide and the repo's Python, and its client
+  src/three/      3D scene
+  src/views/      the Fly, Scenarios and Controllers tabs
 ```
 
 Graphics only read from the core (`SimResult`, `Simulator`, `LiveSession`);
